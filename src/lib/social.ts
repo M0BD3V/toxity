@@ -49,6 +49,15 @@ export async function createGroup(name: string, description = '') {
   return data as string;
 }
 
+export async function inviteGroupMember(groupId: string, nametag: string) {
+  const { data, error } = await requireSupabase().rpc('invite_group_member', {
+    target_group_id: groupId,
+    target_nametag: nametag.toLowerCase(),
+  });
+  if (error) throw error;
+  return data as string;
+}
+
 export async function listGroups() {
   const { data, error } = await requireSupabase().from('groups').select('*, group_members!inner(user_id)').order('created_at');
   if (error) throw error;

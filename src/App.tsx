@@ -5,13 +5,13 @@ import {
 } from 'lucide-react';
 import { requireSupabase } from './lib/supabase';
 import {
-  acceptFriendRequest, addFriendByNametag, createGroup, getMyProfile, listFriendships,
+  acceptFriendRequest, addFriendByNametag, createGroup, getMyProfile, inviteGroupMember, listFriendships,
   listGroupMembers, listGroups, listMessages, sendMessage, subscribeToMessages, updateMyProfile,
   type ChatMessage, type Friendship, type Group, type Profile,
 } from './lib/social';
 import { ToxityCall } from './lib/call';
 
-type Dialog = 'group' | 'friend' | 'profile' | null;
+type Dialog = 'group' | 'friend' | 'profile' | 'invite' | null;
 type Member = { role: string; profile: Profile };
 
 function errorMessage(reason: unknown, fallback: string) {
@@ -174,7 +174,7 @@ function App() {
         <div ref={mediaRef} onDoubleClick={() => (sharing || camera) && void openFullscreen()} className={`stream-preview media-stage ${sharing ? 'sharing' : ''}`}>{!sharing && !camera && <><img src="/assets/brand/svg/toxity-symbol.svg" alt="" /><strong>{inCall ? 'Você está na call' : 'Pronto para compartilhar?'}</strong><small>{activeGroup ? 'Mostre sua tela para o grupo.' : 'Selecione um grupo.'}</small></>}</div>
         <div className="call-actions"><button disabled={!activeGroup} className="primary" onClick={() => void toggleScreen()}><MonitorUp size={17} />{sharing ? 'Parar' : 'Compartilhar'}</button><button disabled={!activeGroup} onClick={async () => { await joinCall(); if (callRef.current) setCamera(await callRef.current.toggleCamera()); }} title="Câmera"><Video size={18} /></button></div>
       </div>
-      <div className="member-heading"><span>MEMBROS — {members.length}</span><button title="Adicionar amigo" onClick={() => setDialog('friend')}><UserPlus size={17} /></button></div>
+      <div className="member-heading"><span>MEMBROS — {members.length}</span><button title="Convidar para o grupo" onClick={() => setDialog('invite')}><UserPlus size={17} /></button></div>
       <div className="member-list">{members.map(({ role, profile: member }) => <div className="member" key={member.id}><div className="avatar member-avatar">{initials(member.display_name)}<span /></div><div><strong>{member.display_name}</strong><small>@{member.nametag} · {role}</small></div></div>)}</div>
     </aside>
 
@@ -182,6 +182,7 @@ function App() {
     {dialog === 'group' && <GroupDialog onClose={() => setDialog(null)} onCreated={async (id) => { await loadSidebar(); setActiveGroupId(id); setDialog(null); setNotice('Grupo criado.'); }} />}
     {dialog === 'friend' && <FriendDialog profile={profile} friendships={friendships} onClose={() => setDialog(null)} onChanged={loadSidebar} />}
     {dialog === 'profile' && profile && <ProfileDialog profile={profile} onClose={() => setDialog(null)} onSaved={(next) => { setProfile(next); setDialog(null); setNotice('Perfil atualizado.'); }} />}
+    {dialog === 'invite' && activeGroup && <InviteDialog group={activeGroup} onClose={() => setDialog(null)} onInvited={async () => { await loadConversation(activeGroup.id); setDialog(null); setNotice('Pessoa adicionada ao grupo.'); }} />}
     {!!screenSources.length && <ScreenPicker sources={screenSources} onClose={() => setScreenSources([])} onSelect={(id) => void startScreenShare(id)} />}
   </div>;
 }
@@ -212,6 +213,11 @@ function ProfileDialog({ profile, onClose, onSaved }: { profile: Profile; onClos
 
 function ScreenPicker({ sources, onClose, onSelect }: { sources: ToxityScreenSource[]; onClose: () => void; onSelect: (id: string) => void }) {
   return <Modal title="O que você quer compartilhar?" onClose={onClose}><div className="screen-picker">{sources.map((source) => <button key={source.id} onClick={() => onSelect(source.id)}><img src={source.thumbnail} alt="" /><span>{source.name}</span></button>)}</div></Modal>;
+}
+
+function InviteDialog({ group, onClose, onInvited }: { group: Group; onClose: () => void; onInvited: () => Promise<void> }) {
+  const [error, setError] = useState(''); const [loading, setLoading] = useState(false);
+  return <Modal title={`Convidar para ${group.name}`} onClose={onClose}><form className="modal-form" onSubmit={async (event) => { event.preventDefault(); setLoading(true); setError(''); const data = new FormData(event.currentTarget); try { await inviteGroupMember(group.id, String(data.get('nametag')).replace(/^@/, '')); await onInvited(); } catch (reason) { setError(errorMessage(reason, 'Não foi possível convidar.')); setLoading(false); } }}><label>Nametag da pessoa<input name="nametag" placeholder="@nametag" pattern="@?[a-zA-Z0-9_]{3,20}" required autoFocus /></label><p className="modal-hint">A pessoa precisa criar a conta antes de ser convidada.</p>{error && <p className="form-error inline-error">{error}</p>}<button className="modal-primary" disabled={loading}>{loading ? 'Adicionando…' : 'Adicionar ao grupo'}</button></form></Modal>;
 }
 
 export default App;
