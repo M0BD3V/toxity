@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">Toxity Pulse Mask</title>
+  <desc id="desc">Friendly geometric gas mask symbol in purple and cyan.</desc>
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path fill="#8B5CF6" d="M256 56c-103 0-176 67-176 168v54c0 55 31 104 78 129l34 18h128l34-18c47-25 78-74 78-129v-54c0-101-73-168-176-168Z"/>
+    <path fill="#171A22" d="M256 93c-81 0-139 51-139 130v48c0 28 10 55 28 76l47 55h128l47-55c18-21 28-48 28-76v-48c0-79-58-130-139-130Z"/>
+    <path fill="#0D0F14" d="M124 215c0-45 35-79 80-79 31 0 52 14 52 14s21-14 52-14c45 0 80 34 80 79 0 54-41 101-93 101-17 0-31-7-39-19-8 12-22 19-39 19-52 0-93-47-93-101Z"/>
+    <path fill="#22D3EE" d="M145 213c0-33 25-57 58-57 27 0 42 12 42 43 0 50-19 91-55 91-27 0-45-33-45-77Z"/>
+    <path fill="#22D3EE" d="M367 213c0-33-25-57-58-57-27 0-42 12-42 43 0 50 19 91 55 91 27 0 45-33 45-77Z"/>
+    <path fill="#F5F7FA" opacity=".72" d="M169 184c8-9 19-14 31-14 8 0 13 6 10 14l-14 34c-3 7-12 11-19 8-14-6-18-30-8-42Z"/>
+    <path fill="#F5F7FA" opacity=".72" d="M343 184c-8-9-19-14-31-14-8 0-13 6-10 14l14 34c3 7 12 11 19 8 14-6 18-30 8-42Z"/>
+    <circle cx="182" cy="249" r="9" fill="#F5F7FA" opacity=".72"/>
+    <circle cx="330" cy="249" r="9" fill="#F5F7FA" opacity=".72"/>
+    <path fill="#8B5CF6" d="M256 276c-48 0-82 37-82 88v26c0 38 31 69 69 69h26c38 0 69-31 69-69v-26c0-51-34-88-82-88Z"/>
+    <path fill="#0D0F14" d="M256 307c-30 0-51 23-51 57v25c0 22 18 39 39 39h24c21 0 39-17 39-39v-25c0-34-21-57-51-57Z"/>
+    <path stroke="#8B5CF6" stroke-width="16" d="M234 353v36M256 345v52M278 353v36"/>
+    <path fill="#8B5CF6" d="M91 298c-34 0-61 27-61 61v24c0 34 27 61 61 61h24c34 0 61-27 61-61v-24c0-34-27-61-61-61H91Z"/>
+    <path fill="#0D0F14" d="M97 324c-25 0-45 20-45 45v5c0 25 20 45 45 45h12c25 0 45-20 45-45v-5c0-25-20-45-45-45H97Z"/>
+    <path stroke="#22D3EE" stroke-width="14" d="M104 350c-13 0-23 10-23 23s10 23 23 23"/>
+    <path fill="#8B5CF6" d="M397 298c-34 0-61 27-61 61v24c0 34 27 61 61 61h24c34 0 61-27 61-61v-24c0-34-27-61-61-61h-24Z"/>
+    <path fill="#0D0F14" d="M403 324c-25 0-45 20-45 45v5c0 25 20 45 45 45h12c25 0 45-20 45-45v-5c0-25-20-45-45-45h-12Z"/>
+    <path stroke="#22D3EE" stroke-width="14" d="M408 350c13 0 23 10 23 23s-10 23-23 23"/>
+    <path stroke="#22D3EE" stroke-width="10" d="M235 291c6-5 13-7 21-7s15 2 21 7"/>
+  </g>
+</svg>
