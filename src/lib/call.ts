@@ -40,7 +40,7 @@ export class ToxityCall {
   async toggleScreen() {
     const enabled = !this.room.localParticipant.isScreenShareEnabled;
     await this.room.localParticipant.setScreenShareEnabled(enabled, {
-      audio: true, systemAudio: 'include', contentHint: 'motion', resolution: { width: 1920, height: 1080, frameRate: 60 },
+      audio: false, contentHint: 'motion', resolution: { width: 1920, height: 1080, frameRate: 60 },
     });
     this.refreshLocalPreview();
     return enabled;
