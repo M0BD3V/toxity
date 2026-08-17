@@ -38,6 +38,7 @@ function App() {
   const [inCall, setInCall] = useState(false);
   const [sharing, setSharing] = useState(false);
   const [camera, setCamera] = useState(false);
+  const [screenSources, setScreenSources] = useState<ToxityScreenSource[]>([]);
   const mediaRef = useRef<HTMLDivElement>(null);
   const callRef = useRef<ToxityCall | null>(null);
   const activeGroup = useMemo(() => groups.find((group) => group.id === activeGroupId), [groups, activeGroupId]);
@@ -87,8 +88,24 @@ function App() {
   async function toggleScreen() {
     await joinCall();
     if (!callRef.current) return;
+    if (!sharing && window.toxity?.listScreenSources) {
+      try {
+        const sources = await window.toxity.listScreenSources();
+        if (!sources.length) throw new Error('Nenhuma tela ou janela disponível.');
+        setScreenSources(sources);
+        return;
+      } catch (error) { setNotice(errorMessage(error, 'Não foi possível listar as telas.')); return; }
+    }
     try { setSharing(await callRef.current.toggleScreen()); }
     catch (error) { setNotice(errorMessage(error, 'Compartilhamento cancelado.')); }
+  }
+
+  async function startScreenShare(sourceId: string) {
+    try {
+      await window.toxity?.selectScreenSource(sourceId);
+      setScreenSources([]);
+      if (callRef.current) setSharing(await callRef.current.toggleScreen());
+    } catch (error) { setNotice(errorMessage(error, 'Não foi possível compartilhar esta tela.')); }
   }
 
   function leaveCall() {
@@ -159,6 +176,7 @@ function App() {
     {dialog === 'group' && <GroupDialog onClose={() => setDialog(null)} onCreated={async (id) => { await loadSidebar(); setActiveGroupId(id); setDialog(null); setNotice('Grupo criado.'); }} />}
     {dialog === 'friend' && <FriendDialog profile={profile} friendships={friendships} onClose={() => setDialog(null)} onChanged={loadSidebar} />}
     {dialog === 'profile' && profile && <ProfileDialog profile={profile} onClose={() => setDialog(null)} onSaved={(next) => { setProfile(next); setDialog(null); setNotice('Perfil atualizado.'); }} />}
+    {!!screenSources.length && <ScreenPicker sources={screenSources} onClose={() => setScreenSources([])} onSelect={(id) => void startScreenShare(id)} />}
   </div>;
 }
 
@@ -184,6 +202,10 @@ function FriendDialog({ profile, friendships, onClose, onChanged }: { profile: P
 
 function ProfileDialog({ profile, onClose, onSaved }: { profile: Profile; onClose: () => void; onSaved: (profile: Profile) => void }) {
   return <Modal title="Seu perfil" onClose={onClose}><form className="modal-form" onSubmit={async (event) => { event.preventDefault(); const data = new FormData(event.currentTarget); onSaved(await updateMyProfile({ display_name: String(data.get('displayName')), bio: String(data.get('bio')), status: String(data.get('status')) as Profile['status'] })); }}><label>Nome<input name="displayName" defaultValue={profile.display_name} minLength={2} maxLength={32} required /></label><label>Nametag<input value={`@${profile.nametag}`} disabled /></label><label>Bio<textarea name="bio" defaultValue={profile.bio} maxLength={280} /></label><label>Status<select name="status" defaultValue={profile.status}><option value="online">Online</option><option value="away">Ausente</option><option value="busy">Ocupado</option><option value="offline">Offline</option></select></label><button className="modal-primary">Salvar perfil</button><button type="button" className="logout-button" onClick={() => void requireSupabase().auth.signOut()}><LogOut size={16} /> Sair da conta</button></form></Modal>;
+}
+
+function ScreenPicker({ sources, onClose, onSelect }: { sources: ToxityScreenSource[]; onClose: () => void; onSelect: (id: string) => void }) {
+  return <Modal title="O que você quer compartilhar?" onClose={onClose}><div className="screen-picker">{sources.map((source) => <button key={source.id} onClick={() => onSelect(source.id)}><img src={source.thumbnail} alt="" /><span>{source.name}</span></button>)}</div></Modal>;
 }
 
 export default App;
