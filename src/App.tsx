@@ -14,6 +14,12 @@ import { ToxityCall } from './lib/call';
 type Dialog = 'group' | 'friend' | 'profile' | null;
 type Member = { role: string; profile: Profile };
 
+function errorMessage(reason: unknown, fallback: string) {
+  if (reason instanceof Error) return reason.message;
+  if (reason && typeof reason === 'object' && 'message' in reason && typeof reason.message === 'string') return reason.message;
+  return fallback;
+}
+
 function initials(name = 'Toxity') {
   return name.split(/\s+/).slice(0, 2).map((part) => part[0]).join('').toUpperCase();
 }
@@ -66,7 +72,7 @@ function App() {
     if (!body || !activeGroupId) return;
     setDraft('');
     try { await sendMessage(activeGroupId, body); }
-    catch (error) { setDraft(body); setNotice(error instanceof Error ? error.message : 'Não foi possível enviar.'); }
+    catch (error) { setDraft(body); setNotice(errorMessage(error, 'Não foi possível enviar.')); }
   }
 
   async function joinCall() {
@@ -75,14 +81,14 @@ function App() {
       if (!callRef.current) callRef.current = new ToxityCall(mediaRef.current);
       if (!inCall) await callRef.current.connect(activeGroupId, profile.display_name);
       setInCall(true); setNotice('Conectado à call.');
-    } catch (error) { setNotice(error instanceof Error ? error.message : 'Falha ao conectar à call.'); }
+    } catch (error) { setNotice(errorMessage(error, 'Falha ao conectar à call.')); }
   }
 
   async function toggleScreen() {
     await joinCall();
     if (!callRef.current) return;
     try { setSharing(await callRef.current.toggleScreen()); }
-    catch (error) { setNotice(error instanceof Error ? error.message : 'Compartilhamento cancelado.'); }
+    catch (error) { setNotice(errorMessage(error, 'Compartilhamento cancelado.')); }
   }
 
   function leaveCall() {
@@ -166,14 +172,14 @@ function Modal({ title, children, onClose }: { title: string; children: ReactNod
 
 function GroupDialog({ onClose, onCreated }: { onClose: () => void; onCreated: (id: string) => Promise<void> }) {
   const [loading, setLoading] = useState(false); const [error, setError] = useState('');
-  return <Modal title="Novo grupo" onClose={onClose}><form className="modal-form" onSubmit={async (event) => { event.preventDefault(); setLoading(true); setError(''); const data = new FormData(event.currentTarget); try { await onCreated(await createGroup(String(data.get('name')), String(data.get('description')))); } catch (reason) { setError(reason instanceof Error ? reason.message : 'Falha ao criar.'); setLoading(false); } }}><label>Nome<input name="name" minLength={2} maxLength={60} required autoFocus /></label><label>Descrição<textarea name="description" maxLength={240} /></label>{error && <p className="form-error">{error}</p>}<button className="modal-primary" disabled={loading}>{loading ? 'Criando…' : 'Criar grupo'}</button></form></Modal>;
+  return <Modal title="Novo grupo" onClose={onClose}><form className="modal-form" onSubmit={async (event) => { event.preventDefault(); setLoading(true); setError(''); const data = new FormData(event.currentTarget); try { await onCreated(await createGroup(String(data.get('name')), String(data.get('description')))); } catch (reason) { setError(errorMessage(reason, 'Falha ao criar.')); setLoading(false); } }}><label>Nome<input name="name" minLength={2} maxLength={60} required autoFocus /></label><label>Descrição<textarea name="description" maxLength={240} /></label>{error && <p className="form-error">{error}</p>}<button className="modal-primary" disabled={loading}>{loading ? 'Criando…' : 'Criar grupo'}</button></form></Modal>;
 }
 
 function FriendDialog({ profile, friendships, onClose, onChanged }: { profile: Profile | null; friendships: Friendship[]; onClose: () => void; onChanged: () => Promise<void> }) {
   const [error, setError] = useState(''); const [message, setMessage] = useState('');
   const incoming = friendships.filter((item) => item.status === 'pending' && item.addressee_id === profile?.id);
   const accepted = friendships.filter((item) => item.status === 'accepted');
-  return <Modal title="Pessoas" onClose={onClose}><form className="friend-add" onSubmit={async (event) => { event.preventDefault(); setError(''); setMessage(''); const data = new FormData(event.currentTarget); try { await addFriendByNametag(String(data.get('nametag')).replace(/^@/, '')); setMessage('Pedido enviado.'); await onChanged(); event.currentTarget.reset(); } catch (reason) { setError(reason instanceof Error ? reason.message : 'Não foi possível adicionar.'); } }}><label>Adicionar por nametag<div><span>@</span><input name="nametag" placeholder="nametag" required pattern="[a-zA-Z0-9_]{3,20}" /><button><UserPlus size={16} /> Enviar</button></div></label></form>{error && <p className="form-error">{error}</p>}{message && <p className="form-success">{message}</p>}<div className="friend-section"><h3>Pedidos recebidos</h3>{incoming.map((item) => <div className="friend-row" key={item.requester_id}><div className="avatar">{initials(item.requester?.display_name)}</div><span><strong>{item.requester?.display_name}</strong><small>@{item.requester?.nametag}</small></span><button onClick={async () => { await acceptFriendRequest(item.requester_id); await onChanged(); }}><Check size={16} /> Aceitar</button></div>)}{!incoming.length && <p>Nenhum pedido pendente.</p>}</div><div className="friend-section"><h3>Amigos</h3>{accepted.map((item) => { const friend = item.requester_id === profile?.id ? item.addressee : item.requester; return <div className="friend-row" key={`${item.requester_id}-${item.addressee_id}`}><div className="avatar">{initials(friend?.display_name)}</div><span><strong>{friend?.display_name}</strong><small>@{friend?.nametag}</small></span></div>; })}{!accepted.length && <p>Sua lista ainda está vazia.</p>}</div></Modal>;
+  return <Modal title="Pessoas" onClose={onClose}><form className="friend-add" onSubmit={async (event) => { event.preventDefault(); setError(''); setMessage(''); const data = new FormData(event.currentTarget); try { await addFriendByNametag(String(data.get('nametag')).replace(/^@/, '')); setMessage('Pedido enviado.'); await onChanged(); event.currentTarget.reset(); } catch (reason) { setError(errorMessage(reason, 'Não foi possível adicionar.')); } }}><label>Adicionar por nametag<div><span>@</span><input name="nametag" placeholder="nametag" required pattern="[a-zA-Z0-9_]{3,20}" /><button><UserPlus size={16} /> Enviar</button></div></label></form>{error && <p className="form-error">{error}</p>}{message && <p className="form-success">{message}</p>}<div className="friend-section"><h3>Pedidos recebidos</h3>{incoming.map((item) => <div className="friend-row" key={item.requester_id}><div className="avatar">{initials(item.requester?.display_name)}</div><span><strong>{item.requester?.display_name}</strong><small>@{item.requester?.nametag}</small></span><button onClick={async () => { await acceptFriendRequest(item.requester_id); await onChanged(); }}><Check size={16} /> Aceitar</button></div>)}{!incoming.length && <p>Nenhum pedido pendente.</p>}</div><div className="friend-section"><h3>Amigos</h3>{accepted.map((item) => { const friend = item.requester_id === profile?.id ? item.addressee : item.requester; return <div className="friend-row" key={`${item.requester_id}-${item.addressee_id}`}><div className="avatar">{initials(friend?.display_name)}</div><span><strong>{friend?.display_name}</strong><small>@{friend?.nametag}</small></span></div>; })}{!accepted.length && <p>Sua lista ainda está vazia.</p>}</div></Modal>;
 }
 
 function ProfileDialog({ profile, onClose, onSaved }: { profile: Profile; onClose: () => void; onSaved: (profile: Profile) => void }) {
