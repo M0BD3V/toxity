@@ -1,7 +1,7 @@
 const { app, BrowserWindow, desktopCapturer, ipcMain, shell } = require('electron');
 const path = require('node:path');
 
-const isDev = !app.isPackaged;
+const isDev = process.argv.includes('--dev');
 const selectedCaptureSources = new Map();
 
 function createWindow() {
