@@ -3,16 +3,18 @@ const { cpSync, existsSync, mkdirSync, renameSync, rmSync, writeFileSync } = req
 const path = require('node:path');
 
 const root = path.resolve(__dirname, '..');
-const shell = process.platform === 'win32';
-
 function run(command, args) {
-  return spawnSync(command, args, { cwd: root, stdio: 'inherit', shell });
+  return spawnSync(command, args, { cwd: root, stdio: 'inherit', shell: false });
 }
 
-let result = run('npm', ['run', 'build']);
+const npmCli = process.env.npm_execpath;
+const builderCli = path.join(root, 'node_modules', 'electron-builder', 'out', 'cli', 'cli.js');
+if (!npmCli || !existsSync(builderCli)) throw new Error('Ferramentas de empacotamento não encontradas.');
+
+let result = run(process.execPath, [npmCli, 'run', 'build']);
 if (result.status !== 0) process.exit(result.status ?? 1);
 
-result = run('npx', ['electron-builder', '--win', 'nsis']);
+result = run(process.execPath, [builderCli, '--win', 'nsis']);
 if (result.status === 0) process.exit(0);
 
 const electronRuntime = path.join(root, 'node_modules', 'electron', 'dist');
@@ -56,5 +58,5 @@ writeFileSync(path.join(appRoot, 'package.json'), JSON.stringify({
   main: 'electron/main.cjs',
 }, null, 2));
 
-result = run('npx', ['electron-builder', '--win', 'nsis', '--prepackaged', unpackedApp]);
+result = run(process.execPath, [builderCli, '--win', 'nsis', '--prepackaged', unpackedApp]);
 process.exit(result.status ?? 1);
