@@ -1,6 +1,6 @@
 import { FormEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Bell, Check, ChevronDown, CircleHelp, Hash, Headphones, LogOut, Mic, MonitorUp,
+  Bell, Check, ChevronDown, CircleHelp, Hash, Headphones, LogOut, Maximize2, Mic, Minimize2, MonitorUp,
   PhoneCall, Plus, Search, Settings, UserPlus, Users, Video, Volume2, Send, X,
 } from 'lucide-react';
 import { requireSupabase } from './lib/supabase';
@@ -38,6 +38,7 @@ function App() {
   const [inCall, setInCall] = useState(false);
   const [sharing, setSharing] = useState(false);
   const [camera, setCamera] = useState(false);
+  const [theaterMode, setTheaterMode] = useState(false);
   const [screenSources, setScreenSources] = useState<ToxityScreenSource[]>([]);
   const mediaRef = useRef<HTMLDivElement>(null);
   const callRef = useRef<ToxityCall | null>(null);
@@ -110,7 +111,12 @@ function App() {
 
   function leaveCall() {
     callRef.current?.disconnect(); callRef.current = null;
-    setInCall(false); setSharing(false); setCamera(false);
+    setInCall(false); setSharing(false); setCamera(false); setTheaterMode(false);
+  }
+
+  async function openFullscreen() {
+    try { await mediaRef.current?.requestFullscreen(); }
+    catch (error) { setNotice(errorMessage(error, 'Não foi possível abrir em tela cheia.')); }
   }
 
   if (busy) return <div className="app-loading"><img src="/assets/brand/svg/toxity-symbol.svg" alt="" /><span>Entrando na sua sintonia…</span></div>;
@@ -163,9 +169,9 @@ function App() {
     </main>
 
     <aside className="member-panel">
-      <div className="call-card">
-        <div className="call-card-head"><span><Volume2 size={17} /> Sala principal</span><small>{inCall ? 'conectado' : 'pronto'}</small></div>
-        <div ref={mediaRef} className={`stream-preview media-stage ${sharing ? 'sharing' : ''}`}>{!sharing && !camera && <><img src="/assets/brand/svg/toxity-symbol.svg" alt="" /><strong>{inCall ? 'Você está na call' : 'Pronto para compartilhar?'}</strong><small>{activeGroup ? 'Mostre sua tela para o grupo.' : 'Selecione um grupo.'}</small></>}</div>
+      <div className={`call-card ${theaterMode ? 'theater-mode' : ''}`}>
+        <div className="call-card-head"><span><Volume2 size={17} /> Sala principal</span><div className="viewer-actions"><small>{inCall ? 'conectado' : 'pronto'}</small>{(sharing || camera) && <><button title={theaterMode ? 'Reduzir' : 'Ampliar'} onClick={() => setTheaterMode((value) => !value)}>{theaterMode ? <Minimize2 size={16} /> : <Maximize2 size={16} />}</button><button title="Tela cheia" onClick={() => void openFullscreen()}><Maximize2 size={16} /></button></>}</div></div>
+        <div ref={mediaRef} onDoubleClick={() => (sharing || camera) && void openFullscreen()} className={`stream-preview media-stage ${sharing ? 'sharing' : ''}`}>{!sharing && !camera && <><img src="/assets/brand/svg/toxity-symbol.svg" alt="" /><strong>{inCall ? 'Você está na call' : 'Pronto para compartilhar?'}</strong><small>{activeGroup ? 'Mostre sua tela para o grupo.' : 'Selecione um grupo.'}</small></>}</div>
         <div className="call-actions"><button disabled={!activeGroup} className="primary" onClick={() => void toggleScreen()}><MonitorUp size={17} />{sharing ? 'Parar' : 'Compartilhar'}</button><button disabled={!activeGroup} onClick={async () => { await joinCall(); if (callRef.current) setCamera(await callRef.current.toggleCamera()); }} title="Câmera"><Video size={18} /></button></div>
       </div>
       <div className="member-heading"><span>MEMBROS — {members.length}</span><button title="Adicionar amigo" onClick={() => setDialog('friend')}><UserPlus size={17} /></button></div>
