@@ -4,17 +4,28 @@ import { requireSupabase } from './supabase';
 export class ToxityCall {
   readonly room = new Room({ adaptiveStream: true, dynacast: true });
 
-  constructor(private mediaRoot: HTMLElement) {
-    this.room.on(RoomEvent.TrackSubscribed, (track: RemoteTrack) => this.attach(track));
-    this.room.on(RoomEvent.TrackUnsubscribed, (track: RemoteTrack) => track.detach().forEach((element) => element.remove()));
+  constructor(private mediaRoot: HTMLElement, private onStateChange?: (state: { remoteMedia: boolean; participants: number }) => void) {
+    this.room.on(RoomEvent.TrackSubscribed, (track: RemoteTrack) => { this.attach(track); this.notifyState(); });
+    this.room.on(RoomEvent.TrackUnsubscribed, (track: RemoteTrack) => { track.detach().forEach((element) => element.remove()); this.notifyState(); });
     this.room.on(RoomEvent.TrackPublished, (_publication: RemoteTrackPublication, _participant: RemoteParticipant) => undefined);
+    this.room.on(RoomEvent.ParticipantConnected, () => this.notifyState());
+    this.room.on(RoomEvent.ParticipantDisconnected, () => this.notifyState());
   }
 
   private attach(track: RemoteTrack) {
     const element = track.attach();
     element.dataset.source = track.source;
     element.autoplay = true;
+    element.setAttribute('playsinline', 'true');
     this.mediaRoot.appendChild(element);
+    if (element instanceof HTMLMediaElement) void element.play().catch(() => undefined);
+  }
+
+  private notifyState() {
+    window.setTimeout(() => this.onStateChange?.({
+      remoteMedia: Boolean(this.mediaRoot.querySelector('[data-source]')),
+      participants: this.room.remoteParticipants.size + (this.room.state === 'connected' ? 1 : 0),
+    }), 0);
   }
 
   async connect(groupId: string, displayName: string) {
@@ -28,6 +39,7 @@ export class ToxityCall {
     const credentials = data as { server_url: string; participant_token: string };
     await this.room.connect(credentials.server_url, credentials.participant_token);
     await this.room.localParticipant.setMicrophoneEnabled(true);
+    this.notifyState();
   }
 
   async toggleMicrophone() { await this.room.localParticipant.setMicrophoneEnabled(!this.room.localParticipant.isMicrophoneEnabled); }
@@ -57,5 +69,5 @@ export class ToxityCall {
       this.mediaRoot.appendChild(element);
     }
   }
-  disconnect() { this.room.disconnect(true); this.mediaRoot.replaceChildren(); }
+  disconnect() { this.room.disconnect(true); this.mediaRoot.replaceChildren(); this.onStateChange?.({ remoteMedia: false, participants: 0 }); }
 }

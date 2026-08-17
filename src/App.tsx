@@ -39,6 +39,8 @@ function App() {
   const [sharing, setSharing] = useState(false);
   const [camera, setCamera] = useState(false);
   const [theaterMode, setTheaterMode] = useState(false);
+  const [remoteMedia, setRemoteMedia] = useState(false);
+  const [callParticipants, setCallParticipants] = useState(0);
   const [screenSources, setScreenSources] = useState<ToxityScreenSource[]>([]);
   const mediaRef = useRef<HTMLDivElement>(null);
   const callRef = useRef<ToxityCall | null>(null);
@@ -83,7 +85,7 @@ function App() {
   async function joinCall() {
     if (!activeGroupId || !profile || !mediaRef.current) return;
     try {
-      if (!callRef.current) callRef.current = new ToxityCall(mediaRef.current);
+      if (!callRef.current) callRef.current = new ToxityCall(mediaRef.current, (state) => { setRemoteMedia(state.remoteMedia); setCallParticipants(state.participants); });
       if (!inCall) await callRef.current.connect(activeGroupId, profile.display_name);
       setInCall(true); setNotice('Conectado à call.');
     } catch (error) { setNotice(errorMessage(error, 'Falha ao conectar à call.')); }
@@ -114,7 +116,7 @@ function App() {
 
   function leaveCall() {
     callRef.current?.disconnect(); callRef.current = null;
-    setInCall(false); setSharing(false); setCamera(false); setTheaterMode(false);
+    setInCall(false); setSharing(false); setCamera(false); setTheaterMode(false); setRemoteMedia(false); setCallParticipants(0);
   }
 
   async function openFullscreen() {
@@ -173,8 +175,8 @@ function App() {
 
     <aside className="member-panel">
       <div className={`call-card ${theaterMode ? 'theater-mode' : ''}`}>
-        <div className="call-card-head"><span><Volume2 size={17} /> Sala principal</span><div className="viewer-actions"><small>{inCall ? 'conectado' : 'pronto'}</small>{(sharing || camera) && <><button title={theaterMode ? 'Reduzir' : 'Ampliar'} onClick={() => setTheaterMode((value) => !value)}>{theaterMode ? <Minimize2 size={16} /> : <Maximize2 size={16} />}</button><button title="Tela cheia" onClick={() => void openFullscreen()}><Maximize2 size={16} /></button></>}</div></div>
-        <div ref={mediaRef} onDoubleClick={() => (sharing || camera) && void openFullscreen()} className={`stream-preview media-stage ${sharing ? 'sharing' : ''}`}>{!sharing && !camera && <><img src="/assets/brand/svg/toxity-symbol.svg" alt="" /><strong>{inCall ? 'Você está na call' : 'Pronto para compartilhar?'}</strong><small>{activeGroup ? 'Mostre sua tela para o grupo.' : 'Selecione um grupo.'}</small></>}</div>
+        <div className="call-card-head"><span><Volume2 size={17} /> Sala principal</span><div className="viewer-actions"><small>{inCall ? `${callParticipants || 1} conectado${callParticipants === 1 ? '' : 's'}` : 'pronto'}</small>{(sharing || camera || remoteMedia) && <><button title={theaterMode ? 'Reduzir' : 'Ampliar'} onClick={() => setTheaterMode((value) => !value)}>{theaterMode ? <Minimize2 size={16} /> : <Maximize2 size={16} />}</button><button title="Tela cheia" onClick={() => void openFullscreen()}><Maximize2 size={16} /></button></>}</div></div>
+        <div ref={mediaRef} onDoubleClick={() => (sharing || camera || remoteMedia) && void openFullscreen()} className={`stream-preview media-stage ${sharing || remoteMedia ? 'sharing' : ''}`}>{!sharing && !camera && !remoteMedia && <><img src="/assets/brand/svg/toxity-symbol.svg" alt="" /><strong>{inCall ? 'Aguardando transmissão' : 'Pronto para compartilhar?'}</strong><small>{activeGroup ? 'Mostre sua tela para o grupo.' : 'Selecione um grupo.'}</small></>}</div>
         <div className="call-actions"><button disabled={!activeGroup} className="primary" onClick={() => void toggleScreen()}><MonitorUp size={17} />{sharing ? 'Parar' : 'Compartilhar'}</button><button disabled={!activeGroup} onClick={async () => { await joinCall(); if (callRef.current) setCamera(await callRef.current.toggleCamera()); }} title="Câmera"><Video size={18} /></button></div>
       </div>
       <div className="member-heading"><span>MEMBROS — {members.length}</span><button title="Convidar para o grupo" onClick={() => setDialog('invite')}><UserPlus size={17} /></button></div>

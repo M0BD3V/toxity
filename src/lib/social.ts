@@ -95,6 +95,9 @@ export async function sendMessage(groupId: string, body: string) {
 
 export function subscribeToMessages(groupId: string, refresh: () => void) {
   const client = requireSupabase();
-  const channel = client.channel(`group:${groupId}`).on('postgres_changes', { event: '*', schema: 'public', table: 'messages', filter: `group_id=eq.${groupId}` }, refresh).subscribe();
-  return () => { void client.removeChannel(channel); };
+  const channel = client.channel(`group:${groupId}`).on('postgres_changes', { event: '*', schema: 'public', table: 'messages', filter: `group_id=eq.${groupId}` }, refresh).subscribe((status) => {
+    if (status === 'SUBSCRIBED') refresh();
+  });
+  const fallback = window.setInterval(refresh, 1500);
+  return () => { window.clearInterval(fallback); void client.removeChannel(channel); };
 }
