@@ -49,13 +49,22 @@ export async function createGroup(name: string, description = '') {
   return data as string;
 }
 
-export async function inviteGroupMember(groupId: string, nametag: string) {
-  const { data, error } = await requireSupabase().rpc('invite_group_member', {
+export async function addFriendToGroup(groupId: string, userId: string) {
+  const { data, error } = await requireSupabase().rpc('add_friend_to_group', {
     target_group_id: groupId,
-    target_nametag: nametag.toLowerCase(),
+    target_user_id: userId,
   });
   if (error) throw error;
   return data as string;
+}
+
+export function subscribeToSocial(refresh: () => void) {
+  const client = requireSupabase();
+  const channel = client.channel('toxity:social')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'friendships' }, refresh)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'group_members' }, refresh)
+    .subscribe();
+  return () => { void client.removeChannel(channel); };
 }
 
 export async function listGroups() {

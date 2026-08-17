@@ -5,8 +5,8 @@ import {
 } from 'lucide-react';
 import { requireSupabase } from './lib/supabase';
 import {
-  acceptFriendRequest, addFriendByNametag, createGroup, getMyProfile, inviteGroupMember, listFriendships,
-  listGroupMembers, listGroups, listMessages, sendMessage, subscribeToMessages, updateMyProfile,
+  acceptFriendRequest, addFriendByNametag, addFriendToGroup, createGroup, getMyProfile, listFriendships,
+  listGroupMembers, listGroups, listMessages, sendMessage, subscribeToMessages, subscribeToSocial, updateMyProfile,
   type ChatMessage, type Friendship, type Group, type Profile,
 } from './lib/social';
 import { ToxityCall } from './lib/call';
@@ -43,6 +43,7 @@ function App() {
   const mediaRef = useRef<HTMLDivElement>(null);
   const callRef = useRef<ToxityCall | null>(null);
   const activeGroup = useMemo(() => groups.find((group) => group.id === activeGroupId), [groups, activeGroupId]);
+  const pendingRequests = useMemo(() => friendships.filter((item) => item.status === 'pending' && item.addressee_id === profile?.id), [friendships, profile?.id]);
 
   const loadSidebar = useCallback(async () => {
     const [myProfile, myGroups, friends] = await Promise.all([getMyProfile(), listGroups(), listFriendships()]);
@@ -59,6 +60,8 @@ function App() {
   useEffect(() => {
     void loadSidebar().catch((error) => setNotice(error.message)).finally(() => setBusy(false));
   }, [loadSidebar]);
+
+  useEffect(() => subscribeToSocial(() => void loadSidebar()), [loadSidebar]);
 
   useEffect(() => {
     void loadConversation(activeGroupId).catch((error) => setNotice(error.message));
@@ -153,7 +156,7 @@ function App() {
     <main className="content-panel">
       <header className="topbar">
         <div className="channel-heading"><Hash size={21} /><strong>{activeGroup ? 'geral' : 'início'}</strong><span>{activeGroup?.description || 'Crie um grupo para começar.'}</span></div>
-        <div className="top-actions"><button title="Notificações"><Bell size={19} /></button><button title="Amigos" onClick={() => setDialog('friend')}><Users size={19} /></button><label className="search"><Search size={16} /><input placeholder="Buscar" /></label><button title="Ajuda"><CircleHelp size={19} /></button></div>
+        <div className="top-actions"><button className="notification-button" title="Notificações" onClick={() => setDialog('friend')}><Bell size={19} />{pendingRequests.length > 0 && <span>{pendingRequests.length}</span>}</button><button title="Amigos" onClick={() => setDialog('friend')}><Users size={19} /></button><label className="search"><Search size={16} /><input placeholder="Buscar" /></label><button title="Ajuda"><CircleHelp size={19} /></button></div>
       </header>
       <section className="chat-area">
         <div className="welcome-block"><span className="welcome-icon"><Hash size={30} /></span><h1>{activeGroup ? `Boas-vindas a ${activeGroup.name}` : 'Seu espaço começa aqui'}</h1><p>{activeGroup ? 'As mensagens abaixo são reais e sincronizadas pelo Supabase.' : 'Crie seu primeiro grupo no botão + abaixo.'}</p></div>
@@ -182,7 +185,7 @@ function App() {
     {dialog === 'group' && <GroupDialog onClose={() => setDialog(null)} onCreated={async (id) => { await loadSidebar(); setActiveGroupId(id); setDialog(null); setNotice('Grupo criado.'); }} />}
     {dialog === 'friend' && <FriendDialog profile={profile} friendships={friendships} onClose={() => setDialog(null)} onChanged={loadSidebar} />}
     {dialog === 'profile' && profile && <ProfileDialog profile={profile} onClose={() => setDialog(null)} onSaved={(next) => { setProfile(next); setDialog(null); setNotice('Perfil atualizado.'); }} />}
-    {dialog === 'invite' && activeGroup && <InviteDialog group={activeGroup} onClose={() => setDialog(null)} onInvited={async () => { await loadConversation(activeGroup.id); setDialog(null); setNotice('Pessoa adicionada ao grupo.'); }} />}
+    {dialog === 'invite' && activeGroup && <InviteDialog group={activeGroup} profile={profile} friendships={friendships} members={members} onClose={() => setDialog(null)} onInvited={async () => { await loadConversation(activeGroup.id); setNotice('Amigo adicionado ao grupo.'); }} />}
     {!!screenSources.length && <ScreenPicker sources={screenSources} onClose={() => setScreenSources([])} onSelect={(id) => void startScreenShare(id)} />}
   </div>;
 }
@@ -215,9 +218,11 @@ function ScreenPicker({ sources, onClose, onSelect }: { sources: ToxityScreenSou
   return <Modal title="O que você quer compartilhar?" onClose={onClose}><div className="screen-picker">{sources.map((source) => <button key={source.id} onClick={() => onSelect(source.id)}><img src={source.thumbnail} alt="" /><span>{source.name}</span></button>)}</div></Modal>;
 }
 
-function InviteDialog({ group, onClose, onInvited }: { group: Group; onClose: () => void; onInvited: () => Promise<void> }) {
-  const [error, setError] = useState(''); const [loading, setLoading] = useState(false);
-  return <Modal title={`Convidar para ${group.name}`} onClose={onClose}><form className="modal-form" onSubmit={async (event) => { event.preventDefault(); setLoading(true); setError(''); const data = new FormData(event.currentTarget); try { await inviteGroupMember(group.id, String(data.get('nametag')).replace(/^@/, '')); await onInvited(); } catch (reason) { setError(errorMessage(reason, 'Não foi possível convidar.')); setLoading(false); } }}><label>Nametag da pessoa<input name="nametag" placeholder="@nametag" pattern="@?[a-zA-Z0-9_]{3,20}" required autoFocus /></label><p className="modal-hint">A pessoa precisa criar a conta antes de ser convidada.</p>{error && <p className="form-error inline-error">{error}</p>}<button className="modal-primary" disabled={loading}>{loading ? 'Adicionando…' : 'Adicionar ao grupo'}</button></form></Modal>;
+function InviteDialog({ group, profile, friendships, members, onClose, onInvited }: { group: Group; profile: Profile | null; friendships: Friendship[]; members: Member[]; onClose: () => void; onInvited: () => Promise<void> }) {
+  const [error, setError] = useState(''); const [adding, setAdding] = useState('');
+  const memberIds = new Set(members.map((item) => item.profile.id));
+  const contacts = friendships.filter((item) => item.status === 'accepted').map((item) => item.requester_id === profile?.id ? item.addressee : item.requester).filter((friend): friend is Profile => Boolean(friend && !memberIds.has(friend.id)));
+  return <Modal title={`Adicionar amigo a ${group.name}`} onClose={onClose}><div className="contact-picker"><p>Somente amizades aceitas podem entrar no grupo.</p>{contacts.map((friend) => <div className="friend-row" key={friend.id}><div className="avatar">{initials(friend.display_name)}</div><span><strong>{friend.display_name}</strong><small>@{friend.nametag}</small></span><button disabled={adding === friend.id} onClick={async () => { setAdding(friend.id); setError(''); try { await addFriendToGroup(group.id, friend.id); await onInvited(); } catch (reason) { setError(errorMessage(reason, 'Não foi possível adicionar.')); } finally { setAdding(''); } }}><Plus size={15} />{adding === friend.id ? 'Adicionando…' : 'Adicionar'}</button></div>)}{!contacts.length && <div className="empty-contacts"><Users size={24} /><strong>Nenhum contato disponível</strong><span>Envie um pedido de amizade e aguarde a pessoa aceitar.</span></div>}{error && <p className="form-error inline-error">{error}</p>}</div></Modal>;
 }
 
 export default App;
