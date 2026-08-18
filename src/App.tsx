@@ -1,12 +1,12 @@
 import { FormEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Bell, Check, ChevronDown, CircleHelp, Eye, Hash, Headphones, LogOut, Maximize2, Mic, Minimize2, MonitorUp,
-  PhoneCall, Plus, Search, Settings, Trash2, UserPlus, Users, Video, Volume2, Send, X,
+  Bell, Check, ChevronDown, CircleHelp, Download, Eye, FileText, Hash, Headphones, Image, LogOut, Maximize2, Mic, Minimize2, MonitorUp,
+  Paperclip, PhoneCall, Plus, Search, Settings, Trash2, UserPlus, Users, Video, Volume2, Send, X,
 } from 'lucide-react';
 import { requireSupabase } from './lib/supabase';
 import {
   acceptFriendRequest, addFriendByNametag, addFriendToGroup, clearCallPresence, createGroup, deleteGroup, getMyProfile, listCallPresence, listDirectMessages, listFriendships,
-  listGroupMembers, listGroups, listMessages, sendDirectMessage, sendMessage, setCallPresence, subscribeToCallPresence, subscribeToDirectMessages, subscribeToMessages, subscribeToSocial, updateMyProfile,
+  listGroupMembers, listGroups, listMessages, sendDirectMessage, sendMessage, setCallPresence, subscribeToCallPresence, subscribeToDirectMessages, subscribeToMessages, subscribeToSocial, updateMyProfile, uploadAttachment,
   type CallPresence, type ChatMessage, type DirectMessage, type Friendship, type Group, type Profile,
 } from './lib/social';
 import { ToxityCall } from './lib/call';
@@ -26,6 +26,11 @@ function initials(name = 'Toxity') {
   return name.split(/\s+/).slice(0, 2).map((part) => part[0]).join('').toUpperCase();
 }
 
+function fileSize(size: number | null) {
+  if (!size) return '';
+  return size < 1024 * 1024 ? `${Math.ceil(size / 1024)} KB` : `${(size / 1024 / 1024).toFixed(1)} MB`;
+}
+
 function App() {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [groups, setGroups] = useState<Group[]>([]);
@@ -37,6 +42,8 @@ function App() {
   const [members, setMembers] = useState<Member[]>([]);
   const [friendships, setFriendships] = useState<Friendship[]>([]);
   const [draft, setDraft] = useState('');
+  const [pendingFile, setPendingFile] = useState<File | null>(null);
+  const [uploading, setUploading] = useState(false);
   const [dialog, setDialog] = useState<Dialog>(null);
   const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(true);
@@ -52,6 +59,8 @@ function App() {
   const [selectedMic, setSelectedMic] = useState(() => localStorage.getItem('toxity:microphone') ?? '');
   const [selectedOutput, setSelectedOutput] = useState(() => localStorage.getItem('toxity:audio-output') ?? '');
   const mediaRef = useRef<HTMLDivElement>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const callRef = useRef<ToxityCall | null>(null);
   const activeGroup = useMemo(() => groups.find((group) => group.id === activeGroupId), [groups, activeGroupId]);
   const pendingRequests = useMemo(() => friendships.filter((item) => item.status === 'pending' && item.addressee_id === profile?.id), [friendships, profile?.id]);
@@ -116,10 +125,13 @@ function App() {
   async function submitMessage(event: FormEvent) {
     event.preventDefault();
     const body = draft.trim();
-    if (!body || (!activeGroupId && !activeFriendId)) return;
-    setDraft('');
-    try { if (activeFriendId) await sendDirectMessage(activeFriendId, body); else await sendMessage(activeGroupId, body); }
-    catch (error) { setDraft(body); setNotice(errorMessage(error, 'Não foi possível enviar.')); }
+    if ((!body && !pendingFile) || (!activeGroupId && !activeFriendId)) return;
+    const file = pendingFile; setDraft(''); setPendingFile(null); setUploading(true);
+    try {
+      const attachment = file ? await uploadAttachment(file) : undefined;
+      if (activeFriendId) await sendDirectMessage(activeFriendId, body, attachment); else await sendMessage(activeGroupId, body, attachment);
+    } catch (error) { setDraft(body); setPendingFile(file); setNotice(errorMessage(error, 'Não foi possível enviar.')); }
+    finally { setUploading(false); }
   }
 
   async function joinCall(microphone = true) {
@@ -227,11 +239,12 @@ function App() {
           {(activeFriend ? directMessages : messages).map((message) => {
             const senderId = 'author_id' in message ? message.author_id : message.sender_id;
             const author = message.profiles?.display_name ?? (senderId === profile?.id ? profile.display_name : activeFriend?.display_name ?? 'Pessoa Toxity');
-            return <article className="message" key={message.id}><div className="avatar message-avatar">{initials(author)}</div><div><div className="message-meta"><strong>{author}</strong><time>{new Date(message.created_at).toLocaleString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</time></div><p>{message.body}</p></div></article>;
+            return <article className="message" key={message.id}><div className="avatar message-avatar">{initials(author)}</div><div><div className="message-meta"><strong>{author}</strong><time>{new Date(message.created_at).toLocaleString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</time></div>{message.body && <p>{message.body}</p>}{message.attachment_url && (message.attachment_mime?.startsWith('image/') ? <a className="message-image" href={message.attachment_url} target="_blank" rel="noreferrer"><img src={message.attachment_url} alt={message.attachment_name ?? 'Imagem enviada'} /></a> : <a className="message-file" href={message.attachment_url} target="_blank" rel="noreferrer"><FileText size={24} /><span><strong>{message.attachment_name}</strong><small>{fileSize(message.attachment_size)}</small></span><Download size={17} /></a>)}</div></article>;
           })}
           {(activeFriend ? !directMessages.length : activeGroup && !messages.length) && <p className="empty-copy">Nenhuma mensagem ainda. Quebre o silêncio.</p>}
         </div>
-        <form className="composer" onSubmit={submitMessage}><button type="button" title="Ações"><Plus size={20} /></button><input disabled={!activeGroup && !activeFriend} value={draft} onChange={(event) => setDraft(event.target.value)} placeholder={activeFriend ? `Mensagem para ${activeFriend.display_name}` : activeGroup ? `Conversar em ${activeGroup.name}` : 'Crie um grupo para conversar'} />{draft.trim() && <button className="send-button" type="submit" title="Enviar"><Send size={18} /></button>}</form>
+        {pendingFile && <div className="pending-attachment"><span>{pendingFile.type.startsWith('image/') ? <Image size={16} /> : <FileText size={16} />}<strong>{pendingFile.name}</strong><small>{fileSize(pendingFile.size)}</small></span><button onClick={() => setPendingFile(null)}><X size={15} /></button></div>}
+        <form className="composer" onSubmit={submitMessage}><button type="button" title="Adicionar imagem" onClick={() => imageInputRef.current?.click()}><Image size={19} /></button><button type="button" title="Anexar arquivo" onClick={() => fileInputRef.current?.click()}><Paperclip size={19} /></button><input ref={imageInputRef} className="hidden-file-input" type="file" accept="image/*" onChange={(event) => setPendingFile(event.target.files?.[0] ?? null)} /><input ref={fileInputRef} className="hidden-file-input" type="file" onChange={(event) => setPendingFile(event.target.files?.[0] ?? null)} /><input disabled={!activeGroup && !activeFriend} value={draft} onChange={(event) => setDraft(event.target.value)} placeholder={activeFriend ? `Mensagem para ${activeFriend.display_name}` : activeGroup ? `Conversar em ${activeGroup.name}` : 'Crie um grupo para conversar'} />{(draft.trim() || pendingFile) && <button disabled={uploading} className="send-button" type="submit" title="Enviar">{uploading ? <span className="send-spinner" /> : <Send size={18} />}</button>}</form>
       </section>
     </main>
 

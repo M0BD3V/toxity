@@ -2,8 +2,9 @@ import { requireSupabase } from './supabase';
 
 export type Profile = { id: string; display_name: string; nametag: string; bio: string; avatar_url: string | null; status: string };
 export type Group = { id: string; name: string; description: string; avatar_url: string | null; owner_id: string };
-export type ChatMessage = { id: string; group_id: string; author_id: string; body: string; created_at: string; profiles?: Pick<Profile, 'display_name' | 'nametag' | 'avatar_url'> };
-export type DirectMessage = { id: string; sender_id: string; recipient_id: string; body: string; created_at: string; profiles?: Pick<Profile, 'display_name' | 'nametag' | 'avatar_url'> };
+type AttachmentFields = { attachment_path: string | null; attachment_name: string | null; attachment_mime: string | null; attachment_size: number | null; attachment_url?: string };
+export type ChatMessage = AttachmentFields & { id: string; group_id: string; author_id: string; body: string; created_at: string; profiles?: Pick<Profile, 'display_name' | 'nametag' | 'avatar_url'> };
+export type DirectMessage = AttachmentFields & { id: string; sender_id: string; recipient_id: string; body: string; created_at: string; profiles?: Pick<Profile, 'display_name' | 'nametag' | 'avatar_url'> };
 export type CallPresence = { group_id: string; user_id: string; sharing: boolean; joined_at: string; updated_at: string; profiles?: Profile };
 export type Friendship = { requester_id: string; addressee_id: string; status: 'pending' | 'accepted' | 'blocked'; created_at: string; requester?: Profile; addressee?: Profile };
 
@@ -78,7 +79,7 @@ export async function listGroups() {
 export async function listMessages(groupId: string) {
   const { data, error } = await requireSupabase().from('messages').select('*, profiles(display_name,nametag,avatar_url)').eq('group_id', groupId).order('created_at').limit(100);
   if (error) throw error;
-  return data as ChatMessage[];
+  return addSignedAttachmentUrls(data as ChatMessage[]);
 }
 
 export async function listGroupMembers(groupId: string) {
@@ -98,14 +99,14 @@ export async function listDirectMessages(friendId: string) {
   if (!auth.user) throw new Error('Sessão não encontrada.');
   const { data, error } = await client.from('direct_messages').select('*, profiles!direct_messages_sender_id_fkey(display_name,nametag,avatar_url)').or(`and(sender_id.eq.${auth.user.id},recipient_id.eq.${friendId}),and(sender_id.eq.${friendId},recipient_id.eq.${auth.user.id})`).order('created_at').limit(100);
   if (error) throw error;
-  return data as DirectMessage[];
+  return addSignedAttachmentUrls(data as DirectMessage[]);
 }
 
-export async function sendDirectMessage(friendId: string, body: string) {
+export async function sendDirectMessage(friendId: string, body: string, attachment?: UploadedAttachment) {
   const client = requireSupabase();
   const { data: auth } = await client.auth.getUser();
   if (!auth.user) throw new Error('Sessão não encontrada.');
-  const { error } = await client.from('direct_messages').insert({ sender_id: auth.user.id, recipient_id: friendId, body });
+  const { error } = await client.from('direct_messages').insert({ sender_id: auth.user.id, recipient_id: friendId, body, ...attachment });
   if (error) throw error;
 }
 
@@ -145,11 +146,33 @@ export function subscribeToCallPresence(groupId: string, refresh: () => void) {
   return () => { window.clearInterval(fallback); void client.removeChannel(channel); };
 }
 
-export async function sendMessage(groupId: string, body: string) {
+export type UploadedAttachment = { attachment_path: string; attachment_name: string; attachment_mime: string; attachment_size: number };
+
+export async function uploadAttachment(file: File) {
+  if (file.size > 25 * 1024 * 1024) throw new Error('O arquivo deve ter no máximo 25 MB.');
   const client = requireSupabase();
   const { data: auth } = await client.auth.getUser();
   if (!auth.user) throw new Error('Sessão não encontrada.');
-  const { error } = await client.from('messages').insert({ group_id: groupId, author_id: auth.user.id, body });
+  const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+  const path = `${auth.user.id}/${crypto.randomUUID()}/${safeName}`;
+  const { error } = await client.storage.from('message-attachments').upload(path, file, { contentType: file.type || 'application/octet-stream' });
+  if (error) throw error;
+  return { attachment_path: path, attachment_name: file.name, attachment_mime: file.type || 'application/octet-stream', attachment_size: file.size } as UploadedAttachment;
+}
+
+async function addSignedAttachmentUrls<T extends AttachmentFields>(messages: T[]) {
+  const paths = messages.map((message) => message.attachment_path).filter((path): path is string => Boolean(path));
+  if (!paths.length) return messages;
+  const { data } = await requireSupabase().storage.from('message-attachments').createSignedUrls(paths, 3600);
+  const urls = new Map((data ?? []).map((item) => [item.path, item.signedUrl]));
+  return messages.map((message) => ({ ...message, attachment_url: message.attachment_path ? urls.get(message.attachment_path) : undefined }));
+}
+
+export async function sendMessage(groupId: string, body: string, attachment?: UploadedAttachment) {
+  const client = requireSupabase();
+  const { data: auth } = await client.auth.getUser();
+  if (!auth.user) throw new Error('Sessão não encontrada.');
+  const { error } = await client.from('messages').insert({ group_id: groupId, author_id: auth.user.id, body, ...attachment });
   if (error) throw error;
 }
 
