@@ -28,7 +28,7 @@ export class ToxityCall {
     }), 0);
   }
 
-  async connect(groupId: string, displayName: string) {
+  async connect(groupId: string, displayName: string, microphone = true) {
     const client = requireSupabase();
     const { data: session } = await client.auth.getSession();
     if (!session.session) throw new Error('Faça login antes de entrar na call.');
@@ -38,11 +38,14 @@ export class ToxityCall {
     if (error) throw new Error(error.message || 'Não foi possível autorizar a call.');
     const credentials = data as { server_url: string; participant_token: string };
     await this.room.connect(credentials.server_url, credentials.participant_token);
-    await this.room.localParticipant.setMicrophoneEnabled(true);
+    await this.room.localParticipant.setMicrophoneEnabled(microphone);
     this.notifyState();
   }
 
   async toggleMicrophone() { await this.room.localParticipant.setMicrophoneEnabled(!this.room.localParticipant.isMicrophoneEnabled); }
+  async switchAudioDevice(kind: 'audioinput' | 'audiooutput', deviceId: string) {
+    await this.room.switchActiveDevice(kind, deviceId);
+  }
   async toggleCamera() {
     const enabled = !this.room.localParticipant.isCameraEnabled;
     await this.room.localParticipant.setCameraEnabled(enabled);

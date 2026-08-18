@@ -1,18 +1,20 @@
 import { FormEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Bell, Check, ChevronDown, CircleHelp, Hash, Headphones, LogOut, Maximize2, Mic, Minimize2, MonitorUp,
-  PhoneCall, Plus, Search, Settings, UserPlus, Users, Video, Volume2, Send, X,
+  Bell, Check, ChevronDown, CircleHelp, Eye, Hash, Headphones, LogOut, Maximize2, Mic, Minimize2, MonitorUp,
+  PhoneCall, Plus, Search, Settings, Trash2, UserPlus, Users, Video, Volume2, Send, X,
 } from 'lucide-react';
 import { requireSupabase } from './lib/supabase';
 import {
-  acceptFriendRequest, addFriendByNametag, addFriendToGroup, createGroup, getMyProfile, listFriendships,
-  listGroupMembers, listGroups, listMessages, sendMessage, subscribeToMessages, subscribeToSocial, updateMyProfile,
-  type ChatMessage, type Friendship, type Group, type Profile,
+  acceptFriendRequest, addFriendByNametag, addFriendToGroup, clearCallPresence, createGroup, deleteGroup, getMyProfile, listCallPresence, listDirectMessages, listFriendships,
+  listGroupMembers, listGroups, listMessages, sendDirectMessage, sendMessage, setCallPresence, subscribeToCallPresence, subscribeToDirectMessages, subscribeToMessages, subscribeToSocial, updateMyProfile,
+  type CallPresence, type ChatMessage, type DirectMessage, type Friendship, type Group, type Profile,
 } from './lib/social';
 import { ToxityCall } from './lib/call';
+import toxitySymbol from '../assets/brand/svg/toxity-symbol.svg';
 
-type Dialog = 'group' | 'friend' | 'profile' | 'invite' | null;
+type Dialog = 'group' | 'friend' | 'profile' | 'invite' | 'delete' | null;
 type Member = { role: string; profile: Profile };
+type AudioKind = 'audioinput' | 'audiooutput';
 
 function errorMessage(reason: unknown, fallback: string) {
   if (reason instanceof Error) return reason.message;
@@ -29,6 +31,9 @@ function App() {
   const [groups, setGroups] = useState<Group[]>([]);
   const [activeGroupId, setActiveGroupId] = useState('');
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [directMessages, setDirectMessages] = useState<DirectMessage[]>([]);
+  const [activeFriendId, setActiveFriendId] = useState('');
+  const [callPresence, setCallPresenceState] = useState<CallPresence[]>([]);
   const [members, setMembers] = useState<Member[]>([]);
   const [friendships, setFriendships] = useState<Friendship[]>([]);
   const [draft, setDraft] = useState('');
@@ -42,10 +47,17 @@ function App() {
   const [remoteMedia, setRemoteMedia] = useState(false);
   const [callParticipants, setCallParticipants] = useState(0);
   const [screenSources, setScreenSources] = useState<ToxityScreenSource[]>([]);
+  const [audioPicker, setAudioPicker] = useState<AudioKind | null>(null);
+  const [audioDevices, setAudioDevices] = useState<MediaDeviceInfo[]>([]);
+  const [selectedMic, setSelectedMic] = useState(() => localStorage.getItem('toxity:microphone') ?? '');
+  const [selectedOutput, setSelectedOutput] = useState(() => localStorage.getItem('toxity:audio-output') ?? '');
   const mediaRef = useRef<HTMLDivElement>(null);
   const callRef = useRef<ToxityCall | null>(null);
   const activeGroup = useMemo(() => groups.find((group) => group.id === activeGroupId), [groups, activeGroupId]);
   const pendingRequests = useMemo(() => friendships.filter((item) => item.status === 'pending' && item.addressee_id === profile?.id), [friendships, profile?.id]);
+  const contacts = useMemo(() => friendships.filter((item) => item.status === 'accepted').map((item) => item.requester_id === profile?.id ? item.addressee : item.requester).filter((friend): friend is Profile => Boolean(friend)), [friendships, profile?.id]);
+  const activeFriend = useMemo(() => contacts.find((friend) => friend.id === activeFriendId), [contacts, activeFriendId]);
+  const broadcasters = callPresence.filter((item) => item.sharing && item.user_id !== profile?.id);
 
   const loadSidebar = useCallback(async () => {
     const [myProfile, myGroups, friends] = await Promise.all([getMyProfile(), listGroups(), listFriendships()]);
@@ -57,6 +69,16 @@ function App() {
     if (!groupId) { setMessages([]); setMembers([]); return; }
     const [nextMessages, nextMembers] = await Promise.all([listMessages(groupId), listGroupMembers(groupId)]);
     setMessages(nextMessages); setMembers(nextMembers);
+  }, []);
+
+  const loadDirectConversation = useCallback(async (friendId: string) => {
+    if (!friendId) { setDirectMessages([]); return; }
+    setDirectMessages(await listDirectMessages(friendId));
+  }, []);
+
+  const loadCallActivity = useCallback(async (groupId: string) => {
+    if (!groupId) { setCallPresenceState([]); return; }
+    setCallPresenceState(await listCallPresence(groupId));
   }, []);
 
   useEffect(() => {
@@ -71,28 +93,49 @@ function App() {
     return subscribeToMessages(activeGroupId, () => void loadConversation(activeGroupId));
   }, [activeGroupId, loadConversation]);
 
+  useEffect(() => {
+    void loadDirectConversation(activeFriendId).catch((error) => setNotice(errorMessage(error, 'Falha ao carregar conversa.')));
+    if (!activeFriendId) return;
+    return subscribeToDirectMessages(() => void loadDirectConversation(activeFriendId));
+  }, [activeFriendId, loadDirectConversation]);
+
+  useEffect(() => {
+    void loadCallActivity(activeGroupId);
+    if (!activeGroupId) return;
+    return subscribeToCallPresence(activeGroupId, () => void loadCallActivity(activeGroupId));
+  }, [activeGroupId, loadCallActivity]);
+
+  useEffect(() => {
+    if (!inCall || !activeGroupId) return;
+    const heartbeat = window.setInterval(() => void setCallPresence(activeGroupId, sharing), 10_000);
+    return () => window.clearInterval(heartbeat);
+  }, [inCall, activeGroupId, sharing]);
+
   useEffect(() => () => callRef.current?.disconnect(), []);
 
   async function submitMessage(event: FormEvent) {
     event.preventDefault();
     const body = draft.trim();
-    if (!body || !activeGroupId) return;
+    if (!body || (!activeGroupId && !activeFriendId)) return;
     setDraft('');
-    try { await sendMessage(activeGroupId, body); }
+    try { if (activeFriendId) await sendDirectMessage(activeFriendId, body); else await sendMessage(activeGroupId, body); }
     catch (error) { setDraft(body); setNotice(errorMessage(error, 'Não foi possível enviar.')); }
   }
 
-  async function joinCall() {
+  async function joinCall(microphone = true) {
     if (!activeGroupId || !profile || !mediaRef.current) return;
     try {
       if (!callRef.current) callRef.current = new ToxityCall(mediaRef.current, (state) => { setRemoteMedia(state.remoteMedia); setCallParticipants(state.participants); });
-      if (!inCall) await callRef.current.connect(activeGroupId, profile.display_name);
-      setInCall(true); setNotice('Conectado à call.');
+      if (!inCall) await callRef.current.connect(activeGroupId, profile.display_name, microphone);
+      if (selectedMic) await callRef.current.switchAudioDevice('audioinput', selectedMic);
+      if (selectedOutput) await callRef.current.switchAudioDevice('audiooutput', selectedOutput);
+      await setCallPresence(activeGroupId, sharing);
+      setInCall(true); setNotice(microphone ? 'Você entrou na chamada.' : 'Assistindo à transmissão.');
     } catch (error) { setNotice(errorMessage(error, 'Falha ao conectar à call.')); }
   }
 
   async function toggleScreen() {
-    await joinCall();
+    await joinCall(true);
     if (!callRef.current) return;
     if (!sharing && window.toxity?.listScreenSources) {
       try {
@@ -102,7 +145,7 @@ function App() {
         return;
       } catch (error) { setNotice(errorMessage(error, 'Não foi possível listar as telas.')); return; }
     }
-    try { setSharing(await callRef.current.toggleScreen()); }
+    try { const next = await callRef.current.toggleScreen(); setSharing(next); await setCallPresence(activeGroupId, next); }
     catch (error) { setNotice(errorMessage(error, 'Compartilhamento cancelado.')); }
   }
 
@@ -110,11 +153,12 @@ function App() {
     try {
       await window.toxity?.selectScreenSource(sourceId);
       setScreenSources([]);
-      if (callRef.current) setSharing(await callRef.current.toggleScreen());
+      if (callRef.current) { const next = await callRef.current.toggleScreen(); setSharing(next); await setCallPresence(activeGroupId, next); }
     } catch (error) { setNotice(errorMessage(error, 'Não foi possível compartilhar esta tela.')); }
   }
 
   function leaveCall() {
+    if (activeGroupId) void clearCallPresence(activeGroupId);
     callRef.current?.disconnect(); callRef.current = null;
     setInCall(false); setSharing(false); setCamera(false); setTheaterMode(false); setRemoteMedia(false); setCallParticipants(0);
   }
@@ -124,60 +168,78 @@ function App() {
     catch (error) { setNotice(errorMessage(error, 'Não foi possível abrir em tela cheia.')); }
   }
 
-  if (busy) return <div className="app-loading"><img src="/assets/brand/svg/toxity-symbol.svg" alt="" /><span>Entrando na sua sintonia…</span></div>;
+  async function openAudioPicker(kind: AudioKind) {
+    try {
+      if (kind === 'audioinput') await navigator.mediaDevices.getUserMedia({ audio: true }).then((stream) => stream.getTracks().forEach((track) => track.stop()));
+      const devices = (await navigator.mediaDevices.enumerateDevices()).filter((device) => device.kind === kind);
+      setAudioDevices(devices); setAudioPicker(kind);
+    } catch (error) { setNotice(errorMessage(error, 'Não foi possível listar os dispositivos de áudio.')); }
+  }
+
+  async function chooseAudioDevice(kind: AudioKind, deviceId: string) {
+    if (kind === 'audioinput') { setSelectedMic(deviceId); localStorage.setItem('toxity:microphone', deviceId); }
+    else { setSelectedOutput(deviceId); localStorage.setItem('toxity:audio-output', deviceId); }
+    if (callRef.current && inCall) await callRef.current.switchAudioDevice(kind, deviceId);
+    setAudioPicker(null); setNotice(kind === 'audioinput' ? 'Microfone selecionado.' : 'Saída de áudio selecionada.');
+  }
+
+  if (busy) return <div className="app-loading"><img src={toxitySymbol} alt="" /><span>Entrando na sua sintonia…</span></div>;
 
   return <div className="app-shell">
     <nav className="server-rail" aria-label="Grupos">
-      <button className="brand-button active" title="Início Toxity"><img src="/assets/brand/svg/toxity-symbol.svg" alt="Toxity" /></button>
+      <button className="brand-button active" title="Início Toxity"><img src={toxitySymbol} alt="Toxity" /></button>
       <span className="rail-divider" />
-      {groups.map((group, index) => <button key={group.id} onClick={() => setActiveGroupId(group.id)} title={group.name} className={`server-button server-${index % 3} ${group.id === activeGroupId ? 'active' : ''}`}>{initials(group.name)}</button>)}
+      {groups.map((group, index) => <button key={group.id} onClick={() => { setActiveGroupId(group.id); setActiveFriendId(''); }} title={group.name} className={`server-button server-${index % 3} ${group.id === activeGroupId && !activeFriendId ? 'active' : ''}`}>{initials(group.name)}</button>)}
       <button className="server-button add-server" title="Criar grupo" onClick={() => setDialog('group')}><Plus size={22} /></button>
     </nav>
 
     <aside className="channel-panel">
-      <button className="server-title">{activeGroup?.name ?? 'Sua Toxity'} <ChevronDown size={17} /></button>
+      <div className="server-title"><span>{activeFriend ? 'Conversas diretas' : activeGroup?.name ?? 'Sua Toxity'}</span>{activeGroup?.owner_id === profile?.id && !activeFriend && <button title="Excluir grupo" onClick={() => setDialog('delete')}><Trash2 size={16} /></button>}</div>
       <div className="channel-scroll">
         {!groups.length && <EmptyGroups onCreate={() => setDialog('group')} />}
         {activeGroup && <>
           <section className="group-intro"><span>ESPAÇO ATIVO</span><strong>{activeGroup.name}</strong><p>{activeGroup.description || 'Converse e compartilhe com seu grupo.'}</p></section>
           <ChannelGroup title="CONVERSA" label="geral" active icon="text" />
           <ChannelGroup title="AO VIVO" label="sala principal" active={inCall} icon="voice" onClick={() => void joinCall()} />
+          {!!callPresence.length && <div className="voice-presence">{callPresence.map((presence) => <div key={presence.user_id}><span className={presence.sharing ? 'live' : ''}>{presence.sharing ? <MonitorUp size={13} /> : <Mic size={13} />}</span><div><strong>{presence.profiles?.display_name}</strong><small>{presence.sharing ? 'Em transmissão' : 'Na chamada'}</small></div></div>)}</div>}
         </>}
         <section className="channel-group quick-actions"><header><span>PESSOAS</span></header><button onClick={() => setDialog('friend')}><UserPlus size={18} /><span>Adicionar por nametag</span></button></section>
+        <section className="channel-group direct-list"><header><span>CONVERSAS DIRETAS</span></header>{contacts.map((friend) => <button key={friend.id} className={activeFriendId === friend.id ? 'active' : ''} onClick={() => setActiveFriendId(friend.id)}><div className="mini-avatar">{initials(friend.display_name)}</div><span>{friend.display_name}</span></button>)}{!contacts.length && <p>Seus amigos aparecerão aqui.</p>}</section>
       </div>
       {inCall && <div className="call-status"><div><strong>Voz conectada</strong><small>{activeGroup?.name}</small></div><button onClick={leaveCall} aria-label="Desconectar"><PhoneCall size={17} /></button></div>}
       <div className="user-bar">
         <div className="avatar me">{initials(profile?.display_name)}<span /></div>
         <div className="user-copy"><strong>{profile?.display_name}</strong><small>@{profile?.nametag}</small></div>
-        <button title="Microfone" onClick={() => void callRef.current?.toggleMicrophone()}><Mic size={18} /></button>
-        <button title="Áudio"><Headphones size={18} /></button>
+        <button title="Escolher microfone" onClick={() => void openAudioPicker('audioinput')}><Mic size={18} /></button>
+        <button title="Escolher saída de áudio" onClick={() => void openAudioPicker('audiooutput')}><Headphones size={18} /></button>
         <button title="Editar perfil" onClick={() => setDialog('profile')}><Settings size={18} /></button>
       </div>
     </aside>
 
     <main className="content-panel">
       <header className="topbar">
-        <div className="channel-heading"><Hash size={21} /><strong>{activeGroup ? 'geral' : 'início'}</strong><span>{activeGroup?.description || 'Crie um grupo para começar.'}</span></div>
+        <div className="channel-heading">{activeFriend ? <Users size={21} /> : <Hash size={21} />}<strong>{activeFriend ? activeFriend.display_name : activeGroup ? 'geral' : 'início'}</strong><span>{activeFriend ? `@${activeFriend.nametag}` : activeGroup?.description || 'Crie um grupo para começar.'}</span></div>
         <div className="top-actions"><button className="notification-button" title="Notificações" onClick={() => setDialog('friend')}><Bell size={19} />{pendingRequests.length > 0 && <span>{pendingRequests.length}</span>}</button><button title="Amigos" onClick={() => setDialog('friend')}><Users size={19} /></button><label className="search"><Search size={16} /><input placeholder="Buscar" /></label><button title="Ajuda"><CircleHelp size={19} /></button></div>
       </header>
       <section className="chat-area">
-        <div className="welcome-block"><span className="welcome-icon"><Hash size={30} /></span><h1>{activeGroup ? `Boas-vindas a ${activeGroup.name}` : 'Seu espaço começa aqui'}</h1><p>{activeGroup ? 'As mensagens abaixo são reais e sincronizadas pelo Supabase.' : 'Crie seu primeiro grupo no botão + abaixo.'}</p></div>
+        <div className="welcome-block"><span className="welcome-icon">{activeFriend ? <Users size={30} /> : <Hash size={30} />}</span><h1>{activeFriend ? `Conversa com ${activeFriend.display_name}` : activeGroup ? `Boas-vindas a ${activeGroup.name}` : 'Seu espaço começa aqui'}</h1><p>{activeFriend ? 'Este é o início da conversa particular entre vocês.' : activeGroup ? 'As mensagens abaixo são reais e sincronizadas pelo Supabase.' : 'Crie seu primeiro grupo no botão + abaixo.'}</p></div>
         <div className="message-list">
-          {messages.map((message) => {
-            const author = message.profiles?.display_name ?? (message.author_id === profile?.id ? profile.display_name : 'Pessoa Toxity');
+          {(activeFriend ? directMessages : messages).map((message) => {
+            const senderId = 'author_id' in message ? message.author_id : message.sender_id;
+            const author = message.profiles?.display_name ?? (senderId === profile?.id ? profile.display_name : activeFriend?.display_name ?? 'Pessoa Toxity');
             return <article className="message" key={message.id}><div className="avatar message-avatar">{initials(author)}</div><div><div className="message-meta"><strong>{author}</strong><time>{new Date(message.created_at).toLocaleString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</time></div><p>{message.body}</p></div></article>;
           })}
-          {activeGroup && !messages.length && <p className="empty-copy">Nenhuma mensagem ainda. Quebre o silêncio.</p>}
+          {(activeFriend ? !directMessages.length : activeGroup && !messages.length) && <p className="empty-copy">Nenhuma mensagem ainda. Quebre o silêncio.</p>}
         </div>
-        <form className="composer" onSubmit={submitMessage}><button type="button" title="Ações"><Plus size={20} /></button><input disabled={!activeGroup} value={draft} onChange={(event) => setDraft(event.target.value)} placeholder={activeGroup ? `Conversar em ${activeGroup.name}` : 'Crie um grupo para conversar'} />{draft.trim() && <button className="send-button" type="submit" title="Enviar"><Send size={18} /></button>}</form>
+        <form className="composer" onSubmit={submitMessage}><button type="button" title="Ações"><Plus size={20} /></button><input disabled={!activeGroup && !activeFriend} value={draft} onChange={(event) => setDraft(event.target.value)} placeholder={activeFriend ? `Mensagem para ${activeFriend.display_name}` : activeGroup ? `Conversar em ${activeGroup.name}` : 'Crie um grupo para conversar'} />{draft.trim() && <button className="send-button" type="submit" title="Enviar"><Send size={18} /></button>}</form>
       </section>
     </main>
 
     <aside className="member-panel">
-      <div className={`call-card ${theaterMode ? 'theater-mode' : ''}`}>
+      <div className={`call-card ${sharing || camera || remoteMedia ? 'media-visible' : 'compact-call'} ${theaterMode ? 'theater-mode' : ''}`}>
         <div className="call-card-head"><span><Volume2 size={17} /> Sala principal</span><div className="viewer-actions"><small>{inCall ? `${callParticipants || 1} conectado${callParticipants === 1 ? '' : 's'}` : 'pronto'}</small>{(sharing || camera || remoteMedia) && <><button title={theaterMode ? 'Reduzir' : 'Ampliar'} onClick={() => setTheaterMode((value) => !value)}>{theaterMode ? <Minimize2 size={16} /> : <Maximize2 size={16} />}</button><button title="Tela cheia" onClick={() => void openFullscreen()}><Maximize2 size={16} /></button></>}</div></div>
-        <div ref={mediaRef} onDoubleClick={() => (sharing || camera || remoteMedia) && void openFullscreen()} className={`stream-preview media-stage ${sharing || remoteMedia ? 'sharing' : ''}`}>{!sharing && !camera && !remoteMedia && <><img src="/assets/brand/svg/toxity-symbol.svg" alt="" /><strong>{inCall ? 'Aguardando transmissão' : 'Pronto para compartilhar?'}</strong><small>{activeGroup ? 'Mostre sua tela para o grupo.' : 'Selecione um grupo.'}</small></>}</div>
-        <div className="call-actions"><button disabled={!activeGroup} className="primary" onClick={() => void toggleScreen()}><MonitorUp size={17} />{sharing ? 'Parar' : 'Compartilhar'}</button><button disabled={!activeGroup} onClick={async () => { await joinCall(); if (callRef.current) setCamera(await callRef.current.toggleCamera()); }} title="Câmera"><Video size={18} /></button></div>
+        <div ref={mediaRef} onDoubleClick={() => (sharing || camera || remoteMedia) && void openFullscreen()} className={`stream-preview media-stage ${sharing || remoteMedia ? 'sharing' : ''}`} />
+        <div className="call-actions">{!inCall && broadcasters.length > 0 && <button className="watch-button" onClick={() => void joinCall(false)}><Eye size={17} /> Assistir transmissão</button>}{!inCall && <button className={broadcasters.length ? '' : 'primary'} disabled={!activeGroup} onClick={() => void joinCall(true)}><PhoneCall size={17} /> Entrar na chamada</button>}{inCall && <><button disabled={!activeGroup} className="primary" onClick={() => void toggleScreen()}><MonitorUp size={17} />{sharing ? 'Parar transmissão' : 'Compartilhar tela'}</button><button disabled={!activeGroup} onClick={async () => { await joinCall(); if (callRef.current) setCamera(await callRef.current.toggleCamera()); }} title="Câmera"><Video size={18} /></button></>}</div>
       </div>
       <div className="member-heading"><span>MEMBROS — {members.length}</span><button title="Convidar para o grupo" onClick={() => setDialog('invite')}><UserPlus size={17} /></button></div>
       <div className="member-list">{members.map(({ role, profile: member }) => <div className="member" key={member.id}><div className="avatar member-avatar">{initials(member.display_name)}<span /></div><div><strong>{member.display_name}</strong><small>@{member.nametag} · {role}</small></div></div>)}</div>
@@ -188,7 +250,9 @@ function App() {
     {dialog === 'friend' && <FriendDialog profile={profile} friendships={friendships} onClose={() => setDialog(null)} onChanged={loadSidebar} />}
     {dialog === 'profile' && profile && <ProfileDialog profile={profile} onClose={() => setDialog(null)} onSaved={(next) => { setProfile(next); setDialog(null); setNotice('Perfil atualizado.'); }} />}
     {dialog === 'invite' && activeGroup && <InviteDialog group={activeGroup} profile={profile} friendships={friendships} members={members} onClose={() => setDialog(null)} onInvited={async () => { await loadConversation(activeGroup.id); setNotice('Amigo adicionado ao grupo.'); }} />}
+    {dialog === 'delete' && activeGroup && <DeleteGroupDialog group={activeGroup} onClose={() => setDialog(null)} onDeleted={async () => { if (inCall) leaveCall(); await deleteGroup(activeGroup.id); setDialog(null); setActiveGroupId(''); await loadSidebar(); setNotice('Grupo excluído.'); }} />}
     {!!screenSources.length && <ScreenPicker sources={screenSources} onClose={() => setScreenSources([])} onSelect={(id) => void startScreenShare(id)} />}
+    {audioPicker && <AudioDeviceDialog kind={audioPicker} devices={audioDevices} selected={audioPicker === 'audioinput' ? selectedMic : selectedOutput} onClose={() => setAudioPicker(null)} onSelect={(id) => void chooseAudioDevice(audioPicker, id)} />}
   </div>;
 }
 
@@ -196,7 +260,7 @@ function ChannelGroup({ title, label, active, icon, onClick }: { title: string; 
   return <section className="channel-group"><header><span>{title}</span></header><button className={active ? 'active' : ''} onClick={onClick}>{icon === 'text' ? <Hash size={18} /> : <Volume2 size={18} />}<span>{label}</span></button></section>;
 }
 
-function EmptyGroups({ onCreate }: { onCreate: () => void }) { return <div className="empty-groups"><img src="/assets/brand/svg/toxity-symbol.svg" alt="" /><strong>Crie sua primeira sintonia</strong><p>Um grupo reúne mensagens, pessoas e chamadas.</p><button onClick={onCreate}><Plus size={16} /> Criar grupo</button></div>; }
+function EmptyGroups({ onCreate }: { onCreate: () => void }) { return <div className="empty-groups"><img src={toxitySymbol} alt="" /><strong>Crie sua primeira sintonia</strong><p>Um grupo reúne mensagens, pessoas e chamadas.</p><button onClick={onCreate}><Plus size={16} /> Criar grupo</button></div>; }
 
 function Modal({ title, children, onClose }: { title: string; children: ReactNode; onClose: () => void }) { return <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}><section className="modal-card"><header><h2>{title}</h2><button onClick={onClose}><X /></button></header>{children}</section></div>; }
 
@@ -218,6 +282,15 @@ function ProfileDialog({ profile, onClose, onSaved }: { profile: Profile; onClos
 
 function ScreenPicker({ sources, onClose, onSelect }: { sources: ToxityScreenSource[]; onClose: () => void; onSelect: (id: string) => void }) {
   return <Modal title="O que você quer compartilhar?" onClose={onClose}><div className="screen-picker">{sources.map((source) => <button key={source.id} onClick={() => onSelect(source.id)}><img src={source.thumbnail} alt="" /><span>{source.name}</span></button>)}</div></Modal>;
+}
+
+function AudioDeviceDialog({ kind, devices, selected, onClose, onSelect }: { kind: AudioKind; devices: MediaDeviceInfo[]; selected: string; onClose: () => void; onSelect: (id: string) => void }) {
+  return <Modal title={kind === 'audioinput' ? 'Escolher microfone' : 'Escolher saída de áudio'} onClose={onClose}><div className="device-list">{devices.map((device, index) => <button className={selected === device.deviceId ? 'selected' : ''} key={device.deviceId} onClick={() => onSelect(device.deviceId)}>{kind === 'audioinput' ? <Mic size={18} /> : <Headphones size={18} />}<span>{device.label || `${kind === 'audioinput' ? 'Microfone' : 'Saída'} ${index + 1}`}</span>{selected === device.deviceId && <Check size={16} />}</button>)}{!devices.length && <p>Nenhum dispositivo disponível.</p>}</div></Modal>;
+}
+
+function DeleteGroupDialog({ group, onClose, onDeleted }: { group: Group; onClose: () => void; onDeleted: () => Promise<void> }) {
+  const [loading, setLoading] = useState(false); const [error, setError] = useState('');
+  return <Modal title="Excluir grupo" onClose={onClose}><div className="delete-dialog"><Trash2 size={28} /><p>Excluir <strong>{group.name}</strong>? Todas as mensagens e chamadas desse grupo serão removidas permanentemente.</p>{error && <p className="form-error inline-error">{error}</p>}<div><button onClick={onClose}>Cancelar</button><button className="danger" disabled={loading} onClick={async () => { setLoading(true); try { await onDeleted(); } catch (reason) { setError(errorMessage(reason, 'Não foi possível excluir.')); setLoading(false); } }}>{loading ? 'Excluindo…' : 'Excluir grupo'}</button></div></div></Modal>;
 }
 
 function InviteDialog({ group, profile, friendships, members, onClose, onInvited }: { group: Group; profile: Profile | null; friendships: Friendship[]; members: Member[]; onClose: () => void; onInvited: () => Promise<void> }) {
