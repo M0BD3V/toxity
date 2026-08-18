@@ -10,6 +10,20 @@ import {
 import type { DenoiseState } from "@shiguredo/rnnoise-wasm";
 import { requireSupabase } from "./supabase";
 
+export type CallStream = {
+  id: string;
+  participantId: string;
+  participantName: string;
+  source: string;
+  label: string;
+};
+export type CallState = {
+  remoteMedia: boolean;
+  participants: number;
+  streams: CallStream[];
+  activeSpeakerIds: string[];
+};
+
 export class ToxityCall {
   private static noiseEngine?: Promise<{
     frameSize: number;
@@ -33,14 +47,12 @@ export class ToxityCall {
     Array<{ context: AudioContext; gain: GainNode }>
   >();
   private watchingStreams = false;
+  private deafened = false;
   screenShareHasAudio = true;
 
   constructor(
     private mediaRoot: HTMLElement,
-    private onStateChange?: (state: {
-      remoteMedia: boolean;
-      participants: number;
-    }) => void,
+    private onStateChange?: (state: CallState) => void,
   ) {
     this.room.on(
       RoomEvent.TrackSubscribed,
@@ -78,13 +90,17 @@ export class ToxityCall {
       this.playEventSound("leave");
       this.notifyState();
     });
+    this.room.on(RoomEvent.ActiveSpeakersChanged, () => this.notifyState());
   }
 
   private attach(track: RemoteTrack, participant: RemoteParticipant) {
     const element = track.attach();
     element.dataset.source = track.source;
     element.dataset.participantId = participant.identity;
+    element.dataset.participantName = participant.name || participant.identity;
+    element.dataset.streamId = `${participant.identity}:${track.source}`;
     element.autoplay = true;
+    element.muted = this.deafened;
     element.setAttribute("playsinline", "true");
     this.mediaRoot.appendChild(element);
     if (element instanceof HTMLMediaElement) {
@@ -151,6 +167,20 @@ export class ToxityCall {
           participants:
             this.room.remoteParticipants.size +
             (this.room.state === "connected" ? 1 : 0),
+          activeSpeakerIds: this.room.activeSpeakers.map(
+            (participant) => participant.identity,
+          ),
+          streams: Array.from(
+            this.mediaRoot.querySelectorAll<HTMLMediaElement>(
+              "video[data-stream-id]",
+            ),
+          ).map((element) => ({
+            id: element.dataset.streamId!,
+            participantId: element.dataset.participantId!,
+            participantName: element.dataset.participantName || "Participante",
+            source: element.dataset.source || "video",
+            label: `${element.dataset.participantName || "Participante"} · ${element.dataset.source === Track.Source.ScreenShare ? "Tela" : "Câmera"}`,
+          })),
         }),
       0,
     );
@@ -288,6 +318,17 @@ export class ToxityCall {
     await this.room.localParticipant.setMicrophoneEnabled(
       !this.room.localParticipant.isMicrophoneEnabled,
     );
+    return !this.room.localParticipant.isMicrophoneEnabled;
+  }
+  setDeafened(deafened: boolean) {
+    this.deafened = deafened;
+    this.mediaRoot
+      .querySelectorAll<HTMLMediaElement>(
+        "audio:not([data-local]),video:not([data-local])",
+      )
+      .forEach((element) => {
+        element.muted = deafened;
+      });
   }
   async switchAudioDevice(
     kind: "audioinput" | "audiooutput",
@@ -335,10 +376,16 @@ export class ToxityCall {
       if (!track) continue;
       const element = track.attach();
       element.dataset.local = "true";
+      element.dataset.source = source;
+      element.dataset.participantId = this.room.localParticipant.identity;
+      element.dataset.participantName =
+        this.room.localParticipant.name || "Você";
+      element.dataset.streamId = `${this.room.localParticipant.identity}:${source}`;
       element.muted = true;
       element.autoplay = true;
       this.mediaRoot.appendChild(element);
     }
+    this.notifyState();
   }
   disconnect() {
     this.room.disconnect(true);
@@ -351,6 +398,11 @@ export class ToxityCall {
     );
     this.remoteAudio.clear();
     this.mediaRoot.replaceChildren();
-    this.onStateChange?.({ remoteMedia: false, participants: 0 });
+    this.onStateChange?.({
+      remoteMedia: false,
+      participants: 0,
+      streams: [],
+      activeSpeakerIds: [],
+    });
   }
 }

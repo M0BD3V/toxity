@@ -12,6 +12,7 @@ import {
   Check,
   ChevronDown,
   CircleHelp,
+  Copy,
   Download,
   Eye,
   FileText,
@@ -21,18 +22,24 @@ import {
   LogOut,
   Maximize2,
   Mic,
+  MicOff,
   Minimize2,
   MonitorUp,
+  MoreHorizontal,
   Paperclip,
   PhoneCall,
   Plus,
+  Pencil,
   Search,
   Settings,
+  SmilePlus,
+  Star,
   Trash2,
   UserPlus,
   Users,
   Video,
   Volume2,
+  VolumeX,
   Send,
   X,
 } from "lucide-react";
@@ -56,6 +63,8 @@ import {
   listGroups,
   listMessages,
   listPresence,
+  leaveGroup,
+  renameGroup,
   sendDirectMessage,
   sendMessage,
   setGroupRole,
@@ -80,7 +89,7 @@ import {
   type Profile,
   type UserPresence,
 } from "./lib/social";
-import { ToxityCall } from "./lib/call";
+import { ToxityCall, type CallStream } from "./lib/call";
 import toxitySymbol from "../assets/brand/svg/toxity-symbol.svg";
 
 type Dialog =
@@ -92,11 +101,15 @@ type Dialog =
   | "profile"
   | "invite"
   | "delete"
+  | "leave"
+  | "rename"
+  | "stickers"
   | "publicProfile"
   | "audioSettings"
   | null;
 type Member = { role: string; profile: Profile };
 type AudioKind = "audioinput" | "audiooutput";
+type Sticker = { id: string; name: string; dataUrl: string };
 
 function errorMessage(reason: unknown, fallback: string) {
   if (reason instanceof Error) return reason.message;
@@ -169,7 +182,26 @@ function App() {
   const [pendingFile, setPendingFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
   const [dialog, setDialog] = useState<Dialog>(null);
+  const [groupMenuOpen, setGroupMenuOpen] = useState(false);
+  const [favoriteGroupIds, setFavoriteGroupIds] = useState<string[]>(() => {
+    try {
+      return JSON.parse(localStorage.getItem("toxity:favorite-groups") ?? "[]");
+    } catch {
+      return [];
+    }
+  });
   const [notice, setNotice] = useState("");
+  const [viewingImage, setViewingImage] = useState<{
+    url: string;
+    name: string;
+  } | null>(null);
+  const [stickers, setStickers] = useState<Sticker[]>(() => {
+    try {
+      return JSON.parse(localStorage.getItem("toxity:stickers") ?? "[]");
+    } catch {
+      return [];
+    }
+  });
   const [busy, setBusy] = useState(true);
   const [inCall, setInCall] = useState(false);
   const [joining, setJoining] = useState(false);
@@ -182,9 +214,15 @@ function App() {
   const [presence, setPresence] = useState<UserPresence[]>([]);
   const [sharing, setSharing] = useState(false);
   const [camera, setCamera] = useState(false);
+  const [microphoneMuted, setMicrophoneMuted] = useState(false);
+  const [deafened, setDeafened] = useState(false);
   const [theaterMode, setTheaterMode] = useState(false);
   const [remoteMedia, setRemoteMedia] = useState(false);
   const [callParticipants, setCallParticipants] = useState(0);
+  const [activeSpeakerIds, setActiveSpeakerIds] = useState<string[]>([]);
+  const [callStreams, setCallStreams] = useState<CallStream[]>([]);
+  const [selectedStreamIds, setSelectedStreamIds] = useState<string[]>([]);
+  const [fullscreenControls, setFullscreenControls] = useState(false);
   const [screenSources, setScreenSources] = useState<ToxityScreenSource[]>([]);
   const [audioPicker, setAudioPicker] = useState<AudioKind | null>(null);
   const [audioDevices, setAudioDevices] = useState<MediaDeviceInfo[]>([]);
@@ -195,6 +233,8 @@ function App() {
     () => localStorage.getItem("toxity:audio-output") ?? "",
   );
   const mediaRef = useRef<HTMLDivElement>(null);
+  const callCardRef = useRef<HTMLDivElement>(null);
+  const fullscreenTimerRef = useRef<number | null>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const callRef = useRef<ToxityCall | null>(null);
@@ -202,6 +242,26 @@ function App() {
     () => groups.find((group) => group.id === activeGroupId),
     [groups, activeGroupId],
   );
+  const orderedGroups = useMemo(
+    () =>
+      [...groups].sort(
+        (a, b) =>
+          Number(favoriteGroupIds.includes(b.id)) -
+          Number(favoriteGroupIds.includes(a.id)),
+      ),
+    [groups, favoriteGroupIds],
+  );
+
+  function toggleFavoriteGroup(groupId: string) {
+    setFavoriteGroupIds((current) => {
+      const next = current.includes(groupId)
+        ? current.filter((id) => id !== groupId)
+        : [...current, groupId];
+      localStorage.setItem("toxity:favorite-groups", JSON.stringify(next));
+      return next;
+    });
+    setGroupMenuOpen(false);
+  }
   const activeChannel = useMemo(
     () => channels.find((channel) => channel.id === activeChannelId),
     [channels, activeChannelId],
@@ -341,6 +401,18 @@ function App() {
   }, [activeChannel?.id, activeChannel?.type]);
 
   useEffect(() => {
+    mediaRef.current
+      ?.querySelectorAll<HTMLVideoElement>("video[data-stream-id]")
+      .forEach((video) =>
+        video.classList.toggle(
+          "hidden-stream",
+          selectedStreamIds.length > 0 &&
+            !selectedStreamIds.includes(video.dataset.streamId ?? ""),
+        ),
+      );
+  }, [callStreams, selectedStreamIds]);
+
+  useEffect(() => {
     void loadDirectConversation(activeFriendId).catch((error) =>
       setNotice(errorMessage(error, "Falha ao carregar conversa.")),
     );
@@ -431,6 +503,32 @@ function App() {
     }
   }
 
+  async function sendSticker(sticker: Sticker) {
+    if (!activeFriendId && !activeChannel) return;
+    setUploading(true);
+    try {
+      const response = await fetch(sticker.dataUrl);
+      const file = new File([await response.blob()], `${sticker.name}.png`, {
+        type: "image/png",
+      });
+      const attachment = await uploadAttachment(file);
+      if (activeFriendId)
+        await sendDirectMessage(activeFriendId, "", attachment);
+      else if (activeChannel)
+        await sendMessage(activeGroupId, activeChannel.id, "", attachment);
+      setDialog(null);
+    } catch (error) {
+      setNotice(errorMessage(error, "Não foi possível enviar a figurinha."));
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  function saveStickers(next: Sticker[]) {
+    setStickers(next);
+    localStorage.setItem("toxity:stickers", JSON.stringify(next));
+  }
+
   async function joinCall(microphone = true) {
     if (joining || inCall) return;
     if (
@@ -448,6 +546,13 @@ function App() {
         callRef.current = new ToxityCall(mediaRef.current, (state) => {
           setRemoteMedia(state.remoteMedia);
           setCallParticipants(state.participants);
+          setActiveSpeakerIds(state.activeSpeakerIds);
+          setCallStreams(state.streams);
+          setSelectedStreamIds((current) =>
+            current.filter((id) =>
+              state.streams.some((stream) => stream.id === id),
+            ),
+          );
         });
       if (!inCall)
         await callRef.current.connect(
@@ -467,6 +572,9 @@ function App() {
       setCallChannelId(activeChannel.id);
       setCallChannelName(activeChannel.name);
       setInCall(true);
+      setMicrophoneMuted(!microphone);
+      setDeafened(false);
+      setTheaterMode(true);
       setNotice(
         microphone ? "Você entrou na chamada." : "Assistindo à transmissão.",
       );
@@ -541,6 +649,8 @@ function App() {
     setInCall(false);
     setSharing(false);
     setCamera(false);
+    setMicrophoneMuted(false);
+    setDeafened(false);
     setTheaterMode(false);
     setRemoteMedia(false);
     setCallParticipants(0);
@@ -551,10 +661,33 @@ function App() {
 
   async function openFullscreen() {
     try {
-      await mediaRef.current?.requestFullscreen();
+      await callCardRef.current?.requestFullscreen();
     } catch (error) {
       setNotice(errorMessage(error, "Não foi possível abrir em tela cheia."));
     }
+  }
+
+  function chooseStreams(ids: string[]) {
+    setSelectedStreamIds(ids);
+    mediaRef.current
+      ?.querySelectorAll<HTMLVideoElement>("video[data-stream-id]")
+      .forEach((video) => {
+        video.classList.toggle(
+          "hidden-stream",
+          ids.length > 0 && !ids.includes(video.dataset.streamId ?? ""),
+        );
+        video.classList.remove("focused-stream");
+      });
+  }
+
+  function revealFullscreenControls() {
+    setFullscreenControls(true);
+    if (fullscreenTimerRef.current)
+      window.clearTimeout(fullscreenTimerRef.current);
+    fullscreenTimerRef.current = window.setTimeout(
+      () => setFullscreenControls(false),
+      2200,
+    );
   }
 
   async function openAudioPicker(kind: AudioKind) {
@@ -627,7 +760,7 @@ function App() {
           <img src={toxitySymbol} alt="Toxity" />
         </button>
         <span className="rail-divider" />
-        {groups.map((group, index) => (
+        {orderedGroups.map((group, index) => (
           <button
             key={group.id}
             onClick={() => {
@@ -638,6 +771,9 @@ function App() {
             className={`server-button server-${index % 3} ${group.id === activeGroupId && !activeFriendId ? "active" : ""}`}
           >
             {initials(group.name)}
+            {favoriteGroupIds.includes(group.id) && (
+              <Star className="favorite-mark" size={10} fill="currentColor" />
+            )}
           </button>
         ))}
         <button
@@ -656,10 +792,65 @@ function App() {
               ? "Conversas diretas"
               : (activeGroup?.name ?? "Sua Toxity")}
           </span>
-          {activeGroup?.owner_id === profile?.id && !activeFriend && (
-            <button title="Excluir grupo" onClick={() => setDialog("delete")}>
-              <Trash2 size={16} />
-            </button>
+          {activeGroup && !activeFriend && (
+            <div className="group-menu-wrap">
+              <button
+                title="Opções do grupo"
+                onClick={() => setGroupMenuOpen((open) => !open)}
+              >
+                <MoreHorizontal size={18} />
+              </button>
+              {groupMenuOpen && (
+                <div className="group-menu">
+                  {activeGroup.owner_id === profile?.id && (
+                    <button
+                      onClick={() => {
+                        setDialog("rename");
+                        setGroupMenuOpen(false);
+                      }}
+                    >
+                      <Pencil size={14} /> Renomear grupo
+                    </button>
+                  )}
+                  <button onClick={() => toggleFavoriteGroup(activeGroup.id)}>
+                    <Star size={14} />
+                    {favoriteGroupIds.includes(activeGroup.id)
+                      ? "Desfavoritar"
+                      : "Favoritar"}
+                  </button>
+                  <button
+                    onClick={async () => {
+                      await navigator.clipboard.writeText(activeGroup.id);
+                      setNotice("Identificação do grupo copiada.");
+                      setGroupMenuOpen(false);
+                    }}
+                  >
+                    <Copy size={14} /> Copiar identificação
+                  </button>
+                  {activeGroup.owner_id === profile?.id ? (
+                    <button
+                      className="danger"
+                      onClick={() => {
+                        setDialog("delete");
+                        setGroupMenuOpen(false);
+                      }}
+                    >
+                      <Trash2 size={14} /> Excluir grupo
+                    </button>
+                  ) : (
+                    <button
+                      className="danger"
+                      onClick={() => {
+                        setDialog("leave");
+                        setGroupMenuOpen(false);
+                      }}
+                    >
+                      <LogOut size={14} /> Sair do grupo
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
           )}
         </div>
         <div className="channel-scroll">
@@ -777,7 +968,13 @@ function App() {
                                   }
                                 }}
                               >
-                                <Avatar profile={presence.profiles} small />
+                                <Avatar
+                                  profile={presence.profiles}
+                                  small
+                                  speaking={activeSpeakerIds.includes(
+                                    presence.user_id,
+                                  )}
+                                />
                                 <div>
                                   <strong>
                                     {presence.profiles?.display_name}
@@ -885,16 +1082,47 @@ function App() {
             <small>@{profile?.nametag}</small>
           </div>
           <button
-            title="Escolher microfone"
-            onClick={() => void openAudioPicker("audioinput")}
+            className={microphoneMuted ? "control-muted" : ""}
+            title={
+              inCall
+                ? microphoneMuted
+                  ? "Ativar microfone"
+                  : "Mutar microfone"
+                : "Escolher microfone"
+            }
+            onClick={async () => {
+              if (!inCall) return void openAudioPicker("audioinput");
+              if (callRef.current)
+                setMicrophoneMuted(await callRef.current.toggleMicrophone());
+            }}
+            onContextMenu={(event) => {
+              event.preventDefault();
+              void openAudioPicker("audioinput");
+            }}
           >
-            <Mic size={18} />
+            {microphoneMuted ? <MicOff size={18} /> : <Mic size={18} />}
           </button>
           <button
-            title="Escolher saída de áudio"
-            onClick={() => void openAudioPicker("audiooutput")}
+            className={deafened ? "control-muted" : ""}
+            title={
+              inCall
+                ? deafened
+                  ? "Voltar a ouvir"
+                  : "Não ouvir ninguém"
+                : "Escolher saída de áudio"
+            }
+            onClick={() => {
+              if (!inCall) return void openAudioPicker("audiooutput");
+              const next = !deafened;
+              callRef.current?.setDeafened(next);
+              setDeafened(next);
+            }}
+            onContextMenu={(event) => {
+              event.preventDefault();
+              void openAudioPicker("audiooutput");
+            }}
           >
-            <Headphones size={18} />
+            {deafened ? <VolumeX size={18} /> : <Headphones size={18} />}
           </button>
           <button title="Editar perfil" onClick={() => setDialog("profile")}>
             <Settings size={18} />
@@ -1019,17 +1247,20 @@ function App() {
                     {message.body && <p>{message.body}</p>}
                     {message.attachment_url &&
                       (message.attachment_mime?.startsWith("image/") ? (
-                        <a
+                        <button
                           className="message-image"
-                          href={message.attachment_url}
-                          target="_blank"
-                          rel="noreferrer"
+                          onClick={() =>
+                            setViewingImage({
+                              url: message.attachment_url!,
+                              name: message.attachment_name ?? "Imagem enviada",
+                            })
+                          }
                         >
                           <img
                             src={message.attachment_url}
                             alt={message.attachment_name ?? "Imagem enviada"}
                           />
-                        </a>
+                        </button>
                       ) : (
                         <a
                           className="message-file"
@@ -1090,6 +1321,13 @@ function App() {
                 >
                   <Paperclip size={19} />
                 </button>
+                <button
+                  type="button"
+                  title="Figurinhas"
+                  onClick={() => setDialog("stickers")}
+                >
+                  <SmilePlus size={19} />
+                </button>
                 <input
                   ref={imageInputRef}
                   className="hidden-file-input"
@@ -1139,6 +1377,8 @@ function App() {
       <aside className="member-panel">
         {(activeChannel?.type === "voice" || inCall) && (
           <div
+            ref={callCardRef}
+            onMouseMove={revealFullscreenControls}
             className={`call-card ${sharing || camera || remoteMedia ? "media-visible" : "compact-call"} ${theaterMode ? "theater-mode" : ""}`}
           >
             <div className="call-card-head">
@@ -1176,6 +1416,33 @@ function App() {
                 )}
               </div>
             </div>
+            {callStreams.length > 1 && (
+              <div className="stream-selector">
+                <button
+                  className={selectedStreamIds.length === 0 ? "selected" : ""}
+                  onClick={() => chooseStreams([])}
+                >
+                  Todas
+                </button>
+                {callStreams.map((stream) => (
+                  <button
+                    key={stream.id}
+                    className={
+                      selectedStreamIds.includes(stream.id) ? "selected" : ""
+                    }
+                    onClick={() =>
+                      chooseStreams(
+                        selectedStreamIds.includes(stream.id)
+                          ? selectedStreamIds.filter((id) => id !== stream.id)
+                          : [...selectedStreamIds, stream.id],
+                      )
+                    }
+                  >
+                    {stream.label}
+                  </button>
+                ))}
+              </div>
+            )}
             <div
               ref={mediaRef}
               onClick={(event) => {
@@ -1194,6 +1461,31 @@ function App() {
               }
               className={`stream-preview media-stage ${sharing || remoteMedia ? "sharing" : ""}`}
             />
+            <div
+              className={`fullscreen-call-controls ${fullscreenControls ? "visible" : ""}`}
+            >
+              <button onClick={() => void toggleScreen()}>
+                <MonitorUp size={18} />
+                {sharing ? "Parar tela" : "Compartilhar"}
+              </button>
+              <button
+                onClick={async () => {
+                  if (callRef.current)
+                    setCamera(await callRef.current.toggleCamera());
+                }}
+              >
+                <Video size={18} />
+                Câmera
+              </button>
+              <button className="hangup" onClick={leaveCall}>
+                <PhoneCall size={18} />
+                Desligar
+              </button>
+              <button onClick={() => void document.exitFullscreen()}>
+                <Minimize2 size={18} />
+                Sair da tela cheia
+              </button>
+            </div>
             <div className="call-actions">
               {!inCall && broadcasters.length > 0 && (
                 <button
@@ -1231,7 +1523,7 @@ function App() {
                     </button>
                   )}
                   <button
-                    disabled={!activeGroup}
+                    disabled={!callGroupId}
                     className="primary"
                     onClick={() => void toggleScreen()}
                   >
@@ -1239,7 +1531,7 @@ function App() {
                     {sharing ? "Parar transmissão" : "Compartilhar tela"}
                   </button>
                   <button
-                    disabled={!activeGroup}
+                    disabled={!callGroupId}
                     onClick={async () => {
                       await joinCall();
                       if (callRef.current)
@@ -1247,7 +1539,11 @@ function App() {
                     }}
                     title="Câmera"
                   >
-                    <Video size={18} />
+                    <Video size={18} />{" "}
+                    {camera ? "Desligar câmera" : "Ligar câmera"}
+                  </button>
+                  <button className="hangup" onClick={leaveCall}>
+                    <PhoneCall size={18} /> Desligar
                   </button>
                 </>
               )}
@@ -1275,6 +1571,7 @@ function App() {
               >
                 <Avatar
                   profile={member}
+                  speaking={activeSpeakerIds.includes(member.id)}
                   status={
                     presence.find((item) => item.user_id === member.id)
                       ?.state ?? "offline"
@@ -1433,6 +1730,50 @@ function App() {
           }}
         />
       )}
+      {dialog === "rename" && activeGroup && (
+        <RenameGroupDialog
+          group={activeGroup}
+          onClose={() => setDialog(null)}
+          onRenamed={async (name) => {
+            await renameGroup(activeGroup.id, name);
+            await loadSidebar();
+            setDialog(null);
+            setNotice("Grupo renomeado.");
+          }}
+        />
+      )}
+      {dialog === "leave" && activeGroup && (
+        <LeaveGroupDialog
+          group={activeGroup}
+          onClose={() => setDialog(null)}
+          onLeft={async () => {
+            if (callGroupId === activeGroup.id) leaveCall();
+            await leaveGroup(activeGroup.id);
+            setDialog(null);
+            setActiveGroupId("");
+            await loadSidebar();
+            setNotice("Você saiu do grupo.");
+          }}
+        />
+      )}
+      {dialog === "stickers" && (
+        <StickerDialog
+          stickers={stickers}
+          uploading={uploading}
+          onClose={() => setDialog(null)}
+          onCreate={(sticker) => saveStickers([...stickers, sticker])}
+          onDelete={(id) =>
+            saveStickers(stickers.filter((sticker) => sticker.id !== id))
+          }
+          onSend={sendSticker}
+        />
+      )}
+      {viewingImage && (
+        <ImageViewer
+          image={viewingImage}
+          onClose={() => setViewingImage(null)}
+        />
+      )}
       {!!screenSources.length && (
         <ScreenPicker
           sources={screenSources}
@@ -1457,13 +1798,17 @@ function Avatar({
   profile,
   small = false,
   status,
+  speaking = false,
 }: {
   profile?: Pick<Profile, "display_name" | "avatar_url"> | null;
   small?: boolean;
   status?: UserPresence["state"];
+  speaking?: boolean;
 }) {
   return (
-    <div className={`avatar ${small ? "avatar-small" : ""}`}>
+    <div
+      className={`avatar ${small ? "avatar-small" : ""} ${speaking ? "speaking" : ""}`}
+    >
       {profile?.avatar_url ? (
         <img src={profile.avatar_url} alt={profile.display_name} />
       ) : (
@@ -2174,6 +2519,245 @@ function DeleteGroupDialog({
             }}
           >
             {loading ? "Excluindo…" : "Excluir grupo"}
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+function ImageViewer({
+  image,
+  onClose,
+}: {
+  image: { url: string; name: string };
+  onClose: () => void;
+}) {
+  return (
+    <div className="image-viewer" onClick={onClose}>
+      <div
+        className="image-viewer-toolbar"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <strong>{image.name}</strong>
+        <a href={image.url} download={image.name} title="Baixar">
+          <Download size={18} />
+        </a>
+        <button onClick={onClose} title="Fechar">
+          <X size={20} />
+        </button>
+      </div>
+      <img
+        src={image.url}
+        alt={image.name}
+        onClick={(event) => event.stopPropagation()}
+      />
+    </div>
+  );
+}
+
+function StickerDialog({
+  stickers,
+  uploading,
+  onClose,
+  onCreate,
+  onDelete,
+  onSend,
+}: {
+  stickers: Sticker[];
+  uploading: boolean;
+  onClose: () => void;
+  onCreate: (sticker: Sticker) => void;
+  onDelete: (id: string) => void;
+  onSend: (sticker: Sticker) => Promise<void>;
+}) {
+  const [creating, setCreating] = useState(false);
+  const [name, setName] = useState("");
+  const [preview, setPreview] = useState("");
+
+  async function loadSticker(file?: File) {
+    if (!file) return;
+    const source = URL.createObjectURL(file);
+    try {
+      const image = new window.Image();
+      image.src = source;
+      await image.decode();
+      const side = Math.min(image.naturalWidth, image.naturalHeight);
+      const canvas = document.createElement("canvas");
+      canvas.width = 256;
+      canvas.height = 256;
+      canvas
+        .getContext("2d")!
+        .drawImage(
+          image,
+          (image.naturalWidth - side) / 2,
+          (image.naturalHeight - side) / 2,
+          side,
+          side,
+          0,
+          0,
+          256,
+          256,
+        );
+      setPreview(canvas.toDataURL("image/png", 0.9));
+      setName(file.name.replace(/\.[^.]+$/, "").slice(0, 28));
+      setCreating(true);
+    } finally {
+      URL.revokeObjectURL(source);
+    }
+  }
+
+  return (
+    <Modal title="Figurinhas" onClose={onClose}>
+      <div className="sticker-dialog">
+        <div className="sticker-tools">
+          <label>
+            <Plus size={16} /> Criar figurinha
+            <input
+              type="file"
+              accept="image/*"
+              onChange={(event) => void loadSticker(event.target.files?.[0])}
+            />
+          </label>
+        </div>
+        {creating && preview && (
+          <div className="sticker-creator">
+            <img src={preview} alt="Prévia da figurinha" />
+            <input
+              value={name}
+              maxLength={28}
+              onChange={(event) => setName(event.target.value)}
+              placeholder="Nome da figurinha"
+            />
+            <button
+              className="modal-primary"
+              onClick={() => {
+                onCreate({
+                  id: crypto.randomUUID(),
+                  name: name.trim() || "figurinha",
+                  dataUrl: preview,
+                });
+                setCreating(false);
+                setPreview("");
+              }}
+            >
+              Salvar na coleção
+            </button>
+          </div>
+        )}
+        <div className="sticker-grid">
+          {stickers.map((sticker) => (
+            <div className="sticker-item" key={sticker.id}>
+              <button
+                disabled={uploading}
+                onClick={() => void onSend(sticker)}
+                title={`Enviar ${sticker.name}`}
+              >
+                <img src={sticker.dataUrl} alt={sticker.name} />
+              </button>
+              <span>{sticker.name}</span>
+              <button
+                className="sticker-delete"
+                onClick={() => onDelete(sticker.id)}
+                title="Excluir figurinha"
+              >
+                <X size={12} />
+              </button>
+            </div>
+          ))}
+          {!stickers.length && !creating && (
+            <p>Sua coleção ainda está vazia.</p>
+          )}
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+function RenameGroupDialog({
+  group,
+  onClose,
+  onRenamed,
+}: {
+  group: Group;
+  onClose: () => void;
+  onRenamed: (name: string) => Promise<void>;
+}) {
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  return (
+    <Modal title="Renomear grupo" onClose={onClose}>
+      <form
+        className="modal-form"
+        onSubmit={async (event) => {
+          event.preventDefault();
+          setLoading(true);
+          try {
+            await onRenamed(
+              String(new FormData(event.currentTarget).get("name")),
+            );
+          } catch (reason) {
+            setError(errorMessage(reason, "Não foi possível renomear."));
+            setLoading(false);
+          }
+        }}
+      >
+        <label>
+          Nome
+          <input
+            name="name"
+            defaultValue={group.name}
+            minLength={2}
+            maxLength={60}
+            required
+            autoFocus
+          />
+        </label>
+        {error && <p className="form-error inline-error">{error}</p>}
+        <button className="modal-primary" disabled={loading}>
+          {loading ? "Salvando…" : "Salvar nome"}
+        </button>
+      </form>
+    </Modal>
+  );
+}
+
+function LeaveGroupDialog({
+  group,
+  onClose,
+  onLeft,
+}: {
+  group: Group;
+  onClose: () => void;
+  onLeft: () => Promise<void>;
+}) {
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  return (
+    <Modal title="Sair do grupo" onClose={onClose}>
+      <div className="delete-dialog">
+        <LogOut size={28} />
+        <p>
+          Sair de <strong>{group.name}</strong>? Para voltar, você precisará ser
+          convidado novamente.
+        </p>
+        {error && <p className="form-error inline-error">{error}</p>}
+        <div>
+          <button onClick={onClose}>Cancelar</button>
+          <button
+            className="danger"
+            disabled={loading}
+            onClick={async () => {
+              setLoading(true);
+              try {
+                await onLeft();
+              } catch (reason) {
+                setError(errorMessage(reason, "Não foi possível sair."));
+                setLoading(false);
+              }
+            }}
+          >
+            {loading ? "Saindo…" : "Sair do grupo"}
           </button>
         </div>
       </div>

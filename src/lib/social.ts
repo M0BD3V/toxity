@@ -342,6 +342,21 @@ export async function deleteGroup(groupId: string) {
   if (error) throw error;
 }
 
+export async function renameGroup(groupId: string, name: string) {
+  const { error } = await requireSupabase().rpc("rename_owned_group", {
+    target_group_id: groupId,
+    next_name: name.trim(),
+  });
+  if (error) throw error;
+}
+
+export async function leaveGroup(groupId: string) {
+  const { error } = await requireSupabase().rpc("leave_group", {
+    target_group_id: groupId,
+  });
+  if (error) throw error;
+}
+
 export async function listDirectMessages(friendId: string) {
   const client = requireSupabase();
   const { data: auth } = await client.auth.getUser();
