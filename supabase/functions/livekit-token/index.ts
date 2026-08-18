@@ -92,6 +92,11 @@ export default {
       return new Response("A valid voice channel is required", { status: 403 });
     }
 
+    const { data: permitted } = await supabase.rpc("can_use_channel", { check_channel_id: channelId });
+    if (!permitted) {
+      return new Response("You do not have access to this voice channel", { status: 403 });
+    }
+
     const apiKey = Deno.env.get("LIVEKIT_API_KEY");
     const apiSecret = Deno.env.get("LIVEKIT_API_SECRET");
     const serverUrl = Deno.env.get("LIVEKIT_URL");

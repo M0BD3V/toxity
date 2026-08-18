@@ -1,4 +1,4 @@
-const { app, BrowserWindow, desktopCapturer, ipcMain, shell, Tray, Menu } = require('electron');
+const { app, BrowserWindow, desktopCapturer, ipcMain, shell, Tray, Menu, powerMonitor } = require('electron');
 const path = require('node:path');
 
 const isDev = process.argv.includes('--dev');
@@ -65,7 +65,7 @@ function createWindow() {
       const selectedId = selectedCaptureSources.get(window.webContents.id);
       const source = sources.find((item) => item.id === selectedId) ?? sources[0];
       selectedCaptureSources.delete(window.webContents.id);
-      callback(source ? { video: source } : {});
+      callback(source ? { video: source, audio: 'loopback' } : {});
     } catch {
       callback({});
     }
@@ -77,6 +77,7 @@ function createWindow() {
 }
 
 ipcMain.handle('app:version', () => app.getVersion());
+ipcMain.handle('app:activity', () => ({ focused: Boolean(mainWindow?.isFocused()), visible: Boolean(mainWindow?.isVisible()), idleSeconds: powerMonitor.getSystemIdleTime() }));
 ipcMain.handle('desktop:list-sources', async () => {
   const sources = await desktopCapturer.getSources({
     types: ['screen', 'window'],

@@ -8,6 +8,7 @@ interface Window {
     platform: string;
     listScreenSources: () => Promise<ToxityScreenSource[]>;
     selectScreenSource: (sourceId: string) => Promise<void>;
+    getActivity: () => Promise<{ focused: boolean; visible: boolean; idleSeconds: number }>;
   };
 }
 
