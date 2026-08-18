@@ -28,12 +28,12 @@ export class ToxityCall {
     }), 0);
   }
 
-  async connect(groupId: string, displayName: string, microphone = true) {
+  async connect(groupId: string, channelId: string, displayName: string, microphone = true) {
     const client = requireSupabase();
     const { data: session } = await client.auth.getSession();
     if (!session.session) throw new Error('Faça login antes de entrar na call.');
     const { data, error } = await client.functions.invoke('livekit-token', {
-      body: { room_name: `group-${groupId}`, participant_name: displayName },
+      body: { group_id: groupId, room_name: `voice-${channelId}`, participant_name: displayName },
     });
     if (error) throw new Error(error.message || 'Não foi possível autorizar a call.');
     const credentials = data as { server_url: string; participant_token: string };

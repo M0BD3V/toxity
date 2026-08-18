@@ -1,8 +1,31 @@
-const { app, BrowserWindow, desktopCapturer, ipcMain, shell } = require('electron');
+const { app, BrowserWindow, desktopCapturer, ipcMain, shell, Tray, Menu } = require('electron');
 const path = require('node:path');
 
 const isDev = process.argv.includes('--dev');
 const selectedCaptureSources = new Map();
+const appIcon = path.join(__dirname, '..', 'assets', 'brand', 'icons', 'toxity.ico');
+let mainWindow = null;
+let tray = null;
+let quitting = false;
+
+function showWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) mainWindow = createWindow();
+  mainWindow.show();
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.focus();
+}
+
+function createTray() {
+  if (tray) return;
+  tray = new Tray(appIcon);
+  tray.setToolTip('Toxity');
+  tray.setContextMenu(Menu.buildFromTemplate([
+    { label: 'Abrir Toxity', click: showWindow },
+    { type: 'separator' },
+    { label: 'Sair', click: () => { quitting = true; app.quit(); } },
+  ]));
+  tray.on('double-click', showWindow);
+}
 
 function createWindow() {
   const window = new BrowserWindow({
@@ -12,7 +35,7 @@ function createWindow() {
     minHeight: 680,
     backgroundColor: '#0D0F14',
     title: 'Toxity',
-    icon: path.join(__dirname, '..', 'assets', 'brand', 'icons', 'toxity.ico'),
+    icon: appIcon,
     autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
@@ -21,6 +44,15 @@ function createWindow() {
       sandbox: true,
     },
   });
+
+  mainWindow = window;
+  window.on('close', (event) => {
+    if (!quitting) {
+      event.preventDefault();
+      window.hide();
+    }
+  });
+  window.on('closed', () => { if (mainWindow === window) mainWindow = null; });
 
   window.webContents.setWindowOpenHandler(({ url }) => {
     if (url.startsWith('https://')) shell.openExternal(url);
@@ -41,6 +73,7 @@ function createWindow() {
 
   if (isDev) window.loadURL('http://127.0.0.1:5173');
   else window.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
+  return window;
 }
 
 ipcMain.handle('app:version', () => app.getVersion());
@@ -57,10 +90,9 @@ ipcMain.handle('desktop:select-source', (event, sourceId) => {
 });
 
 app.whenReady().then(() => {
+  createTray();
   createWindow();
-  app.on('activate', () => BrowserWindow.getAllWindows().length === 0 && createWindow());
+  app.on('activate', showWindow);
 });
 
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit();
-});
+app.on('before-quit', () => { quitting = true; });

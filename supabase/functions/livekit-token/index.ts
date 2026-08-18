@@ -2,6 +2,7 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { withSupabase } from "jsr:@supabase/server@^1";
 
 type TokenRequest = {
+  group_id?: string;
   room_name?: string;
   participant_name?: string;
 };
@@ -62,7 +63,7 @@ export default {
 
     const body = (await request.json()) as TokenRequest;
     const roomName = String(body.room_name ?? "");
-    const groupId = roomName.replace(/^group-/, "");
+    const groupId = String(body.group_id ?? "");
     if (!roomName || !groupId) {
       return Response.json({ error: "room_name is required" }, { status: 400 });
     }
@@ -76,6 +77,19 @@ export default {
 
     if (!membership) {
       return new Response("Forbidden", { status: 403 });
+    }
+
+    const channelId = roomName.startsWith("voice-") ? roomName.slice(6) : "";
+    const { data: voiceChannel } = await supabase
+      .from("group_channels")
+      .select("id")
+      .eq("id", channelId)
+      .eq("group_id", groupId)
+      .eq("type", "voice")
+      .maybeSingle();
+
+    if (!voiceChannel) {
+      return new Response("A valid voice channel is required", { status: 403 });
     }
 
     const apiKey = Deno.env.get("LIVEKIT_API_KEY");

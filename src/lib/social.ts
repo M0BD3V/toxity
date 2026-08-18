@@ -2,10 +2,11 @@ import { requireSupabase } from './supabase';
 
 export type Profile = { id: string; display_name: string; nametag: string; bio: string; avatar_url: string | null; status: string };
 export type Group = { id: string; name: string; description: string; avatar_url: string | null; owner_id: string };
+export type GroupChannel = { id: string; group_id: string; name: string; type: 'text' | 'voice'; position: number; created_by: string };
 type AttachmentFields = { attachment_path: string | null; attachment_name: string | null; attachment_mime: string | null; attachment_size: number | null; attachment_url?: string };
 export type ChatMessage = AttachmentFields & { id: string; group_id: string; author_id: string; body: string; created_at: string; profiles?: Pick<Profile, 'display_name' | 'nametag' | 'avatar_url'> };
 export type DirectMessage = AttachmentFields & { id: string; sender_id: string; recipient_id: string; body: string; created_at: string; profiles?: Pick<Profile, 'display_name' | 'nametag' | 'avatar_url'> };
-export type CallPresence = { group_id: string; user_id: string; sharing: boolean; joined_at: string; updated_at: string; profiles?: Profile };
+export type CallPresence = { group_id: string; channel_id: string | null; user_id: string; sharing: boolean; joined_at: string; updated_at: string; profiles?: Profile };
 export type Friendship = { requester_id: string; addressee_id: string; status: 'pending' | 'accepted' | 'blocked'; created_at: string; requester?: Profile; addressee?: Profile };
 
 export async function getMyProfile() {
@@ -76,8 +77,8 @@ export async function listGroups() {
   return data as Group[];
 }
 
-export async function listMessages(groupId: string) {
-  const { data, error } = await requireSupabase().from('messages').select('*, profiles(display_name,nametag,avatar_url)').eq('group_id', groupId).order('created_at').limit(100);
+export async function listMessages(channelId: string) {
+  const { data, error } = await requireSupabase().from('messages').select('*, profiles(display_name,nametag,avatar_url)').eq('channel_id', channelId).order('created_at').limit(100);
   if (error) throw error;
   return addSignedAttachmentUrls(data as ChatMessage[]);
 }
@@ -86,6 +87,18 @@ export async function listGroupMembers(groupId: string) {
   const { data, error } = await requireSupabase().from('group_members').select('role, profiles(*)').eq('group_id', groupId).order('joined_at');
   if (error) throw error;
   return (data ?? []).map((row) => ({ role: row.role as string, profile: row.profiles as unknown as Profile }));
+}
+
+export async function listGroupChannels(groupId: string) {
+  const { data, error } = await requireSupabase().from('group_channels').select('*').eq('group_id', groupId).order('position');
+  if (error) throw error;
+  return data as GroupChannel[];
+}
+
+export async function createGroupChannel(groupId: string, name: string, type: 'text' | 'voice') {
+  const { data, error } = await requireSupabase().rpc('create_group_channel', { target_group_id: groupId, channel_name: name, channel_type: type });
+  if (error) throw error;
+  return data as string;
 }
 
 export async function deleteGroup(groupId: string) {
@@ -110,18 +123,20 @@ export async function sendDirectMessage(friendId: string, body: string, attachme
   if (error) throw error;
 }
 
-export async function listCallPresence(groupId: string) {
+export async function listCallPresence(groupId: string, channelId?: string) {
   const cutoff = new Date(Date.now() - 35_000).toISOString();
-  const { data, error } = await requireSupabase().from('call_presence').select('*, profiles(*)').eq('group_id', groupId).gte('updated_at', cutoff).order('joined_at');
+  let query = requireSupabase().from('call_presence').select('*, profiles(*)').eq('group_id', groupId).gte('updated_at', cutoff).order('joined_at');
+  if (channelId) query = query.eq('channel_id', channelId);
+  const { data, error } = await query;
   if (error) throw error;
   return data as CallPresence[];
 }
 
-export async function setCallPresence(groupId: string, sharing: boolean) {
+export async function setCallPresence(groupId: string, channelId: string, sharing: boolean) {
   const client = requireSupabase();
   const { data: auth } = await client.auth.getUser();
   if (!auth.user) throw new Error('Sessão não encontrada.');
-  const { error } = await client.from('call_presence').upsert({ group_id: groupId, user_id: auth.user.id, sharing, updated_at: new Date().toISOString() });
+  const { error } = await client.from('call_presence').upsert({ group_id: groupId, channel_id: channelId, user_id: auth.user.id, sharing, updated_at: new Date().toISOString() });
   if (error) throw error;
 }
 
@@ -168,19 +183,32 @@ async function addSignedAttachmentUrls<T extends AttachmentFields>(messages: T[]
   return messages.map((message) => ({ ...message, attachment_url: message.attachment_path ? urls.get(message.attachment_path) : undefined }));
 }
 
-export async function sendMessage(groupId: string, body: string, attachment?: UploadedAttachment) {
+export async function sendMessage(groupId: string, channelId: string, body: string, attachment?: UploadedAttachment) {
   const client = requireSupabase();
   const { data: auth } = await client.auth.getUser();
   if (!auth.user) throw new Error('Sessão não encontrada.');
-  const { error } = await client.from('messages').insert({ group_id: groupId, author_id: auth.user.id, body, ...attachment });
+  const { error } = await client.from('messages').insert({ group_id: groupId, channel_id: channelId, author_id: auth.user.id, body, ...attachment });
   if (error) throw error;
 }
 
-export function subscribeToMessages(groupId: string, refresh: () => void) {
+export function subscribeToMessages(channelId: string, refresh: () => void) {
   const client = requireSupabase();
-  const channel = client.channel(`group:${groupId}`).on('postgres_changes', { event: '*', schema: 'public', table: 'messages', filter: `group_id=eq.${groupId}` }, refresh).subscribe((status) => {
+  const channel = client.channel(`messages:${channelId}`).on('postgres_changes', { event: '*', schema: 'public', table: 'messages', filter: `channel_id=eq.${channelId}` }, refresh).subscribe((status) => {
     if (status === 'SUBSCRIBED') refresh();
   });
   const fallback = window.setInterval(refresh, 1500);
   return () => { window.clearInterval(fallback); void client.removeChannel(channel); };
+}
+
+export async function uploadAvatar(file: File) {
+  if (!file.type.startsWith('image/')) throw new Error('Escolha uma imagem.');
+  if (file.size > 5 * 1024 * 1024) throw new Error('A foto deve ter no máximo 5 MB.');
+  const client = requireSupabase();
+  const { data: auth } = await client.auth.getUser();
+  if (!auth.user) throw new Error('Sessão não encontrada.');
+  const extension = file.name.split('.').pop()?.toLowerCase() || 'png';
+  const path = `${auth.user.id}/avatar-${crypto.randomUUID()}.${extension}`;
+  const { error } = await client.storage.from('avatars').upload(path, file, { contentType: file.type });
+  if (error) throw error;
+  return client.storage.from('avatars').getPublicUrl(path).data.publicUrl;
 }
