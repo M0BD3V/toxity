@@ -59,13 +59,13 @@ function createWindow() {
     return { action: 'deny' };
   });
 
-  window.webContents.session.setDisplayMediaRequestHandler(async (_request, callback) => {
+  window.webContents.session.setDisplayMediaRequestHandler(async (request, callback) => {
     try {
       const sources = await desktopCapturer.getSources({ types: ['screen', 'window'] });
       const selectedId = selectedCaptureSources.get(window.webContents.id);
       const source = sources.find((item) => item.id === selectedId) ?? sources[0];
       selectedCaptureSources.delete(window.webContents.id);
-      callback(source ? { video: source, audio: 'loopback' } : {});
+      callback(source ? { video: source, ...(request.audioRequested ? { audio: 'loopback' } : {}) } : {});
     } catch {
       callback({});
     }

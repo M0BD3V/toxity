@@ -336,6 +336,11 @@ function App() {
   }, [activeChannel, loadConversation]);
 
   useEffect(() => {
+    if (activeChannel?.type === "voice")
+      void ToxityCall.preloadNoiseSuppression();
+  }, [activeChannel?.id, activeChannel?.type]);
+
+  useEffect(() => {
     void loadDirectConversation(activeFriendId).catch((error) =>
       setNotice(errorMessage(error, "Falha ao carregar conversa.")),
     );
@@ -490,6 +495,10 @@ function App() {
     try {
       const next = await callRef.current.toggleScreen();
       setSharing(next);
+      if (next && !callRef.current.screenShareHasAudio)
+        setNotice(
+          "Tela compartilhada. Esta fonte não permitiu áudio, então a transmissão continuou somente com vídeo.",
+        );
       await setCallPresence(
         callGroupId || activeGroupId,
         callChannelId || activeChannelId,
@@ -507,6 +516,10 @@ function App() {
       if (callRef.current) {
         const next = await callRef.current.toggleScreen();
         setSharing(next);
+        if (next && !callRef.current.screenShareHasAudio)
+          setNotice(
+            "Tela compartilhada sem áudio porque esta fonte recusou a captura sonora.",
+          );
         await setCallPresence(
           callGroupId || activeGroupId,
           callChannelId || activeChannelId,
@@ -891,7 +904,15 @@ function App() {
 
       <main className="content-panel">
         <header className="topbar">
-          <div className="channel-heading">
+          <button
+            className={`channel-heading ${activeFriend ? "profile-heading" : ""}`}
+            onClick={() => {
+              if (activeFriend) {
+                setSelectedProfile(activeFriend);
+                setDialog("publicProfile");
+              }
+            }}
+          >
             {activeFriend ? (
               <Users size={21} />
             ) : activeChannel?.type === "voice" ? (
@@ -911,7 +932,7 @@ function App() {
                   ? "Canal de chamada"
                   : activeGroup?.description || "Crie um grupo para começar."}
             </span>
-          </div>
+          </button>
           <div className="top-actions">
             <button
               className="notification-button"

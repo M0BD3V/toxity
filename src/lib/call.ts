@@ -11,6 +11,18 @@ import type { DenoiseState } from "@shiguredo/rnnoise-wasm";
 import { requireSupabase } from "./supabase";
 
 export class ToxityCall {
+  private static noiseEngine?: Promise<{
+    frameSize: number;
+    createDenoiseState: () => DenoiseState;
+  }>;
+  static preloadNoiseSuppression() {
+    if (localStorage.getItem("toxity:noise-suppression") === "false")
+      return Promise.resolve();
+    this.noiseEngine ??= import("@shiguredo/rnnoise-wasm").then(({ Rnnoise }) =>
+      Rnnoise.load(),
+    );
+    return this.noiseEngine.then(() => undefined);
+  }
   readonly room = new Room({ adaptiveStream: true, dynacast: true });
   private microphoneContext?: AudioContext;
   private microphoneSource?: MediaStream;
@@ -21,6 +33,7 @@ export class ToxityCall {
     Array<{ context: AudioContext; gain: GainNode }>
   >();
   private watchingStreams = false;
+  screenShareHasAudio = true;
 
   constructor(
     private mediaRoot: HTMLElement,
@@ -220,8 +233,12 @@ export class ToxityCall {
     source.connect(highpass);
     if (suppression) {
       try {
-        const { Rnnoise } = await import("@shiguredo/rnnoise-wasm");
-        const rnnoise = await Rnnoise.load();
+        const rnnoise =
+          (await ToxityCall.noiseEngine) ??
+          (await (ToxityCall.noiseEngine =
+            import("@shiguredo/rnnoise-wasm").then(({ Rnnoise }) =>
+              Rnnoise.load(),
+            )));
         const state = rnnoise.createDenoiseState();
         const processor = context.createScriptProcessor(4096, 1, 1);
         processor.onaudioprocess = (event) => {
@@ -286,11 +303,25 @@ export class ToxityCall {
   }
   async toggleScreen() {
     const enabled = !this.room.localParticipant.isScreenShareEnabled;
-    await this.room.localParticipant.setScreenShareEnabled(enabled, {
-      audio: true,
-      contentHint: "motion",
-      resolution: { width: 1920, height: 1080, frameRate: 60 },
-    });
+    this.screenShareHasAudio = true;
+    try {
+      await this.room.localParticipant.setScreenShareEnabled(enabled, {
+        audio: true,
+        contentHint: "motion",
+        resolution: { width: 1920, height: 1080, frameRate: 60 },
+      });
+    } catch (error) {
+      if (!enabled) throw error;
+      await this.room.localParticipant
+        .setScreenShareEnabled(false)
+        .catch(() => undefined);
+      await this.room.localParticipant.setScreenShareEnabled(true, {
+        audio: false,
+        contentHint: "motion",
+        resolution: { width: 1920, height: 1080, frameRate: 60 },
+      });
+      this.screenShareHasAudio = false;
+    }
     this.refreshLocalPreview();
     return enabled;
   }
