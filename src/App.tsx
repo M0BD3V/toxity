@@ -59,6 +59,7 @@ import {
   listDirectMessages,
   listFriendships,
   listGroupChannels,
+  listChannelMembers,
   listGroupMembers,
   listGroups,
   listMessages,
@@ -106,6 +107,7 @@ type Dialog =
   | "stickers"
   | "publicProfile"
   | "audioSettings"
+  | "memberPermissions"
   | null;
 type Member = { role: string; profile: Profile };
 type AudioKind = "audioinput" | "audiooutput";
@@ -183,6 +185,9 @@ function App() {
   const [uploading, setUploading] = useState(false);
   const [dialog, setDialog] = useState<Dialog>(null);
   const [groupMenuOpen, setGroupMenuOpen] = useState(false);
+  const [memberMenuId, setMemberMenuId] = useState<string | null>(null);
+  const [memberPermissionsTarget, setMemberPermissionsTarget] =
+    useState<Member | null>(null);
   const [favoriteGroupIds, setFavoriteGroupIds] = useState<string[]>(() => {
     try {
       return JSON.parse(localStorage.getItem("toxity:favorite-groups") ?? "[]");
@@ -1560,64 +1565,152 @@ function App() {
           </button>
         </div>
         <div className="member-list">
-          {members.map(({ role, profile: member }) => (
-            <div className="member-row" key={member.id}>
-              <button
-                className="member"
-                onClick={() => {
-                  setSelectedProfile(member);
-                  setDialog("publicProfile");
-                }}
-              >
-                <Avatar
-                  profile={member}
-                  speaking={activeSpeakerIds.includes(member.id)}
-                  status={
-                    presence.find((item) => item.user_id === member.id)
-                      ?.state ?? "offline"
-                  }
-                />
-                <div>
-                  <strong>{member.display_name}</strong>
-                  <small>
-                    @{member.nametag} · {role}
-                  </small>
-                </div>
-              </button>
-              {activeGroup?.owner_id === profile?.id &&
-                member.id !== profile?.id && (
-                  <div className="member-admin-actions">
+          {members.map(({ role, profile: member }) => {
+            const canManage =
+              member.id !== profile?.id &&
+              (myGroupRole === "owner" ||
+                (myGroupRole === "admin" && role === "member"));
+            return (
+              <div className="member-row" key={member.id}>
+                <button
+                  className="member"
+                  onClick={() => {
+                    setSelectedProfile(member);
+                    setDialog("publicProfile");
+                  }}
+                >
+                  <Avatar
+                    profile={member}
+                    speaking={activeSpeakerIds.includes(member.id)}
+                    status={
+                      presence.find((item) => item.user_id === member.id)
+                        ?.state ?? "offline"
+                    }
+                  />
+                  <div>
+                    <strong>{member.display_name}</strong>
+                    <small>
+                      @{member.nametag} · {role}
+                    </small>
+                  </div>
+                </button>
+                {canManage && (
+                  <div className="member-actions-wrap">
                     <button
-                      title={
-                        role === "admin"
-                          ? "Rebaixar para membro"
-                          : "Promover a administrador"
+                      className="member-more-button"
+                      title={`Opções de ${member.display_name}`}
+                      onClick={() =>
+                        setMemberMenuId((current) =>
+                          current === member.id ? null : member.id,
+                        )
                       }
-                      onClick={async () => {
-                        await setGroupRole(
-                          activeGroup!.id,
-                          member.id,
-                          role === "admin" ? "member" : "admin",
-                        );
-                        await loadGroupData(activeGroup!.id);
-                      }}
                     >
-                      {role === "admin" ? "Membro" : "Admin"}
+                      <MoreHorizontal size={17} />
                     </button>
-                    <button
-                      className="danger"
-                      title="Bloquear no grupo"
-                      onClick={async () => {
-                        await banGroupMember(activeGroup!.id, member.id);
-                        await loadGroupData(activeGroup!.id);
-                      }}
-                    >
-                      Bloquear
-                    </button>
+                    {memberMenuId === member.id && (
+                      <div className="member-menu">
+                        <span>FUNÇÃO NO GRUPO</span>
+                        <button
+                          className={role === "member" ? "selected" : ""}
+                          disabled={role === "member"}
+                          onClick={async () => {
+                            try {
+                              await setGroupRole(
+                                activeGroup!.id,
+                                member.id,
+                                "member",
+                              );
+                              await loadGroupData(activeGroup!.id);
+                              setNotice(
+                                `${member.display_name} agora é membro comum.`,
+                              );
+                            } catch (error) {
+                              setNotice(
+                                errorMessage(
+                                  error,
+                                  "Não foi possível alterar a função.",
+                                ),
+                              );
+                            } finally {
+                              setMemberMenuId(null);
+                            }
+                          }}
+                        >
+                          Membro comum{" "}
+                          {role === "member" && <Check size={14} />}
+                        </button>
+                        <button
+                          className={role === "admin" ? "selected" : ""}
+                          disabled={role === "admin"}
+                          onClick={async () => {
+                            try {
+                              await setGroupRole(
+                                activeGroup!.id,
+                                member.id,
+                                "admin",
+                              );
+                              await loadGroupData(activeGroup!.id);
+                              setNotice(
+                                `${member.display_name} agora é administrador.`,
+                              );
+                            } catch (error) {
+                              setNotice(
+                                errorMessage(
+                                  error,
+                                  "Não foi possível alterar a função.",
+                                ),
+                              );
+                            } finally {
+                              setMemberMenuId(null);
+                            }
+                          }}
+                        >
+                          Administrador{" "}
+                          {role === "admin" && <Check size={14} />}
+                        </button>
+                        <div className="member-menu-divider" />
+                        <button
+                          onClick={() => {
+                            setMemberPermissionsTarget({
+                              role,
+                              profile: member,
+                            });
+                            setDialog("memberPermissions");
+                            setMemberMenuId(null);
+                          }}
+                        >
+                          <Settings size={14} /> Permissões de canais
+                        </button>
+                        <button
+                          className="danger"
+                          onClick={async () => {
+                            try {
+                              await banGroupMember(activeGroup!.id, member.id);
+                              await loadGroupData(activeGroup!.id);
+                              setNotice(
+                                `${member.display_name} foi bloqueado do grupo.`,
+                              );
+                            } catch (error) {
+                              setNotice(
+                                errorMessage(
+                                  error,
+                                  "Não foi possível bloquear.",
+                                ),
+                              );
+                            } finally {
+                              setMemberMenuId(null);
+                            }
+                          }}
+                        >
+                          <Trash2 size={14} /> Bloquear do grupo
+                        </button>
+                      </div>
+                    )}
                   </div>
                 )}
-            </div>
-          ))}
+              </div>
+            );
+          })}
         </div>
       </aside>
 
@@ -1664,6 +1757,23 @@ function App() {
           }}
         />
       )}
+      {dialog === "memberPermissions" &&
+        memberPermissionsTarget &&
+        activeGroup && (
+          <MemberPermissionsDialog
+            member={memberPermissionsTarget}
+            channels={channels}
+            onClose={() => {
+              setDialog(null);
+              setMemberPermissionsTarget(null);
+            }}
+            onSaved={() => {
+              setDialog(null);
+              setMemberPermissionsTarget(null);
+              setNotice("Permissões individuais atualizadas.");
+            }}
+          />
+        )}
       {dialog === "friend" && (
         <FriendDialog
           profile={profile}
@@ -2148,6 +2258,144 @@ function ChannelSettingsDialog({
           }}
         >
           Salvar permissões
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
+function MemberPermissionsDialog({
+  member,
+  channels,
+  onClose,
+  onSaved,
+}: {
+  member: Member;
+  channels: GroupChannel[];
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const restrictedChannels = channels.filter(
+    (channel) =>
+      channel.access_mode === "locked" || channel.access_mode === "private",
+  );
+  const [allowedByChannel, setAllowedByChannel] = useState<
+    Map<string, string[]>
+  >(new Map());
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    void listChannelMembers(restrictedChannels.map((channel) => channel.id))
+      .then((result) => {
+        if (!cancelled) setAllowedByChannel(result);
+      })
+      .catch((reason) => {
+        if (!cancelled)
+          setError(
+            errorMessage(reason, "Não foi possível carregar as permissões."),
+          );
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [member.profile.id]);
+
+  function hasAccess(channelId: string) {
+    return (allowedByChannel.get(channelId) ?? []).includes(member.profile.id);
+  }
+
+  function toggleAccess(channelId: string, allowed: boolean) {
+    setAllowedByChannel((current) => {
+      const next = new Map(current);
+      const users = next.get(channelId) ?? [];
+      next.set(
+        channelId,
+        allowed
+          ? [...new Set([...users, member.profile.id])]
+          : users.filter((id) => id !== member.profile.id),
+      );
+      return next;
+    });
+  }
+
+  return (
+    <Modal
+      title={`Permissões de ${member.profile.display_name}`}
+      onClose={onClose}
+    >
+      <div className="member-permissions-dialog">
+        <p>
+          {member.role === "admin"
+            ? "Administradores já têm acesso a todos os canais. Estas marcações valem caso a pessoa volte a ser membro comum."
+            : "Escolha os canais bloqueados ou privados que esta pessoa pode acessar."}
+        </p>
+        {loading ? (
+          <p className="empty-copy">Carregando permissões…</p>
+        ) : restrictedChannels.length ? (
+          <div className="member-channel-permissions">
+            {restrictedChannels.map((channel) => (
+              <label key={channel.id}>
+                <input
+                  type="checkbox"
+                  checked={hasAccess(channel.id)}
+                  onChange={(event) =>
+                    toggleAccess(channel.id, event.target.checked)
+                  }
+                />
+                <span>
+                  {channel.type === "voice" ? (
+                    <Volume2 size={15} />
+                  ) : (
+                    <Hash size={15} />
+                  )}
+                  <strong>{channel.name}</strong>
+                  <small>
+                    {channel.access_mode === "private"
+                      ? "Privado"
+                      : "Bloqueado"}
+                  </small>
+                </span>
+              </label>
+            ))}
+          </div>
+        ) : (
+          <p className="empty-copy">
+            Este grupo ainda não tem canais privados ou bloqueados.
+          </p>
+        )}
+        {error && <p className="form-error inline-error">{error}</p>}
+        <button
+          className="modal-primary"
+          disabled={loading || saving}
+          onClick={async () => {
+            setSaving(true);
+            setError("");
+            try {
+              await Promise.all(
+                restrictedChannels.map((channel) =>
+                  configureChannel(
+                    channel.id,
+                    channel.access_mode,
+                    allowedByChannel.get(channel.id) ?? [],
+                  ),
+                ),
+              );
+              onSaved();
+            } catch (reason) {
+              setError(
+                errorMessage(reason, "Não foi possível salvar as permissões."),
+              );
+              setSaving(false);
+            }
+          }}
+        >
+          {saving ? "Salvando…" : "Salvar permissões"}
         </button>
       </div>
     </Modal>

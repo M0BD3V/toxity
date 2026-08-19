@@ -255,6 +255,21 @@ export async function configureChannel(
   if (error) throw error;
 }
 
+export async function listChannelMembers(channelIds: string[]) {
+  if (!channelIds.length) return new Map<string, string[]>();
+  const { data, error } = await requireSupabase()
+    .from("channel_members")
+    .select("channel_id,user_id")
+    .in("channel_id", channelIds);
+  if (error) throw error;
+  return (data ?? []).reduce((result, row) => {
+    const users = result.get(row.channel_id) ?? [];
+    users.push(row.user_id);
+    result.set(row.channel_id, users);
+    return result;
+  }, new Map<string, string[]>());
+}
+
 export async function setGroupRole(
   groupId: string,
   userId: string,

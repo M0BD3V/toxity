@@ -57,13 +57,16 @@
   justify-content: flex-start !important;
   gap: 9px;
   padding: 0 10px !important;
+  border: 0 !important;
+  background: #1b2029 !important;
   color: #cbd1da !important;
   font-size: 10px;
   white-space: nowrap;
 }
 
 .group-menu button:hover {
-  background: #282f3b !important;
+  background: #2a313e !important;
+  color: #ffffff !important;
 }
 
 .group-menu button.danger {
@@ -249,4 +252,163 @@
 .user-bar button.control-muted {
   background: #3a2028 !important;
   color: #fb7185 !important;
+}
+
+.member-actions-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  padding-right: 6px;
+}
+
+.member-more-button {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #8c96a4;
+  cursor: pointer;
+  opacity: 0;
+}
+
+.member-row:hover .member-more-button,
+.member-more-button:focus-visible {
+  opacity: 1;
+}
+
+.member-more-button:hover {
+  background: #272e3a;
+  color: #fff;
+}
+
+.member-menu {
+  position: absolute;
+  z-index: 75;
+  top: 34px;
+  right: 6px;
+  width: 215px;
+  padding: 7px;
+  border-radius: 12px;
+  background: #1b2029;
+  box-shadow: 0 16px 38px #000b;
+}
+
+.member-menu > span {
+  display: block;
+  padding: 5px 9px 7px;
+  color: #7d8796;
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+
+.member-menu button {
+  width: 100%;
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 8px;
+  background: #1b2029;
+  color: #cbd1da;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.member-menu button svg:last-child {
+  margin-left: auto;
+  color: #61dfb5;
+}
+
+.member-menu button:hover:not(:disabled) {
+  background: #2a313e;
+  color: #fff;
+}
+
+.member-menu button:disabled {
+  cursor: default;
+}
+
+.member-menu button.selected {
+  color: #bba8ff;
+}
+
+.member-menu button.danger {
+  color: #fb8fa0;
+}
+
+.member-menu button.danger:hover {
+  background: #3a2028;
+}
+
+.member-menu-divider {
+  height: 1px;
+  margin: 5px 3px;
+  background: #303744;
+}
+
+.member-permissions-dialog {
+  display: flex;
+  flex-direction: column;
+  gap: 13px;
+  padding: 18px;
+}
+
+.member-permissions-dialog > p {
+  margin: 0;
+  color: #9ba4b1;
+  font-size: 10px;
+  line-height: 1.55;
+}
+
+.member-channel-permissions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 260px;
+  overflow: auto;
+}
+
+.member-channel-permissions label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 48px;
+  padding: 0 11px;
+  border-radius: 10px;
+  background: #10141b;
+  cursor: pointer;
+}
+
+.member-channel-permissions input {
+  width: 15px;
+  height: 15px;
+  accent-color: #7654d8;
+}
+
+.member-channel-permissions span {
+  display: grid;
+  grid-template-columns: 18px 1fr auto;
+  align-items: center;
+  flex: 1;
+  gap: 7px;
+}
+
+.member-channel-permissions svg {
+  color: #a991f5;
+}
+
+.member-channel-permissions strong {
+  font-size: 11px;
+}
+
+.member-channel-permissions small {
+  color: #7e8795;
+  font-size: 8px;
 }
