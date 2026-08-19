@@ -102,6 +102,8 @@ export async function updatePassword(password: string) {
 }
 
 export function mapAuthError(reason: unknown): { code: AuthErrorCode; message: string } {
+  if (typeof reason === "object" && reason !== null && "status" in reason && (reason as { status?: number }).status === 429)
+    return { code: "rate_limited", message: "Muitas tentativas. Aguarde alguns instantes antes de pedir outro e-mail." };
   const raw = reason instanceof Error ? reason.message.toLowerCase() : "";
   if (!raw || raw.includes("network") || raw.includes("fetch"))
     return { code: "network", message: "Não foi possível conectar ao serviço. Tente novamente." };
