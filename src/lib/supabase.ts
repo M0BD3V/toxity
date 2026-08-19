@@ -7,7 +7,12 @@ export const isBackendConfigured = Boolean(url && key && !url.includes('SEU-PROJ
 
 export const supabase = isBackendConfigured
   ? createClient(url, key, {
-      auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true },
+      auth: {
+        persistSession: true,
+        autoRefreshToken: true,
+        detectSessionInUrl: true,
+        flowType: 'pkce',
+      },
     })
   : null;
 

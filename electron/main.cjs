@@ -7,6 +7,34 @@ const appIcon = path.join(__dirname, '..', 'assets', 'brand', 'icons', 'toxity.i
 let mainWindow = null;
 let tray = null;
 let quitting = false;
+let pendingAuthLink = validateAuthLink(process.argv.find((value) => value.startsWith('toxity://')));
+
+function validateAuthLink(value) {
+  if (!value) return null;
+  try {
+    const parsed = new URL(value);
+    if (parsed.protocol !== 'toxity:' || parsed.hostname !== 'reset-password' || parsed.pathname !== '/') return null;
+    const keys = [...parsed.searchParams.keys()];
+    if (keys.some((key) => key !== 'source') || parsed.searchParams.getAll('source').length > 1) return null;
+    const source = parsed.searchParams.get('source');
+    if (source && !/^[a-z0-9_-]{1,24}$/i.test(source)) return null;
+    return { route: 'reset-password', source: source || undefined };
+  } catch {
+    return null;
+  }
+}
+
+function handleAuthLink(url) {
+  const link = validateAuthLink(url);
+  if (!link) return;
+  pendingAuthLink = link;
+  showWindow();
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    if (mainWindow.webContents.isLoading()) return;
+    mainWindow.webContents.send('auth:deep-link', link);
+    pendingAuthLink = null;
+  }
+}
 
 function showWindow() {
   if (!mainWindow || mainWindow.isDestroyed()) mainWindow = createWindow();
@@ -58,6 +86,12 @@ function createWindow() {
     if (url.startsWith('https://')) shell.openExternal(url);
     return { action: 'deny' };
   });
+  window.webContents.on('did-finish-load', () => {
+    if (pendingAuthLink) {
+      window.webContents.send('auth:deep-link', pendingAuthLink);
+      pendingAuthLink = null;
+    }
+  });
 
   window.webContents.session.setDisplayMediaRequestHandler(async (request, callback) => {
     try {
@@ -90,7 +124,24 @@ ipcMain.handle('desktop:select-source', (event, sourceId) => {
   selectedCaptureSources.set(event.sender.id, sourceId);
 });
 
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
+if (!hasSingleInstanceLock) app.quit();
+
+app.on('second-instance', (_event, commandLine) => {
+  handleAuthLink(commandLine.find((value) => value.startsWith('toxity://')));
+});
+
+app.on('open-url', (event, url) => {
+  event.preventDefault();
+  handleAuthLink(url);
+});
+
 app.whenReady().then(() => {
+  if (process.defaultApp && process.argv[1]) {
+    app.setAsDefaultProtocolClient('toxity', process.execPath, [path.resolve(process.argv[1])]);
+  } else {
+    app.setAsDefaultProtocolClient('toxity');
+  }
   createTray();
   createWindow();
   app.on('activate', showWindow);

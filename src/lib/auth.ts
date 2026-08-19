@@ -3,6 +3,15 @@ import { requireSupabase } from "./supabase";
 export const registrationMessage =
   "Se este e-mail puder receber uma nova confirmação, enviaremos um código de seis dígitos.";
 
+export type AuthErrorCode =
+  | "invalid_input"
+  | "invalid_credentials"
+  | "email_not_confirmed"
+  | "rate_limited"
+  | "expired"
+  | "network"
+  | "unknown";
+
 export function normalizeEmail(value: string) {
   return value.trim().toLowerCase();
 }
@@ -12,9 +21,9 @@ export function normalizeNametag(value: string) {
 }
 
 export function passwordError(password: string) {
-  if (password.length < 10) return "Use no mínimo 10 caracteres na senha.";
-  if (!/[a-zA-Z]/.test(password) || !/\d/.test(password))
-    return "A senha precisa ter pelo menos uma letra e um número.";
+  if (password.length < 8) return "Use no mínimo 8 caracteres na senha.";
+  if (!/[A-Z]/.test(password) || !/[^A-Za-z0-9]/.test(password))
+    return "A senha precisa ter pelo menos uma letra maiúscula e um símbolo.";
   return "";
 }
 
@@ -74,10 +83,14 @@ export async function signIn(email: string, password: string) {
 }
 
 export async function requestPasswordReset(email: string) {
+  const callback = import.meta.env.VITE_TOXITY_AUTH_CALLBACK_URL;
+  if (!callback) {
+    throw new Error("A recuperação ainda não está configurada para este ambiente.");
+  }
   const { error } = await requireSupabase().auth.resetPasswordForEmail(
     normalizeEmail(email),
     {
-      redirectTo: "toxity://reset-password",
+      redirectTo: callback,
     },
   );
   if (error) throw error;
@@ -86,6 +99,21 @@ export async function requestPasswordReset(email: string) {
 export async function updatePassword(password: string) {
   const { error } = await requireSupabase().auth.updateUser({ password });
   if (error) throw error;
+}
+
+export function mapAuthError(reason: unknown): { code: AuthErrorCode; message: string } {
+  const raw = reason instanceof Error ? reason.message.toLowerCase() : "";
+  if (!raw || raw.includes("network") || raw.includes("fetch"))
+    return { code: "network", message: "Não foi possível conectar ao serviço. Tente novamente." };
+  if (raw.includes("invalid login") || raw.includes("invalid credentials"))
+    return { code: "invalid_credentials", message: "E-mail ou senha inválidos." };
+  if (raw.includes("not confirmed") || raw.includes("email not confirmed"))
+    return { code: "email_not_confirmed", message: "Confirme seu e-mail antes de entrar." };
+  if (raw.includes("expired") || raw.includes("invalid or has expired"))
+    return { code: "expired", message: "Este link expirou. Solicite uma nova recuperação." };
+  if (raw.includes("rate limit") || raw.includes("too many"))
+    return { code: "rate_limited", message: "Muitas tentativas. Aguarde alguns instantes." };
+  return { code: "unknown", message: "Não foi possível concluir esta operação agora." };
 }
 
 export async function signOut() {

@@ -269,6 +269,8 @@
 .auth-field-hint.error {
   color: #fb8fa0;
 }
+
+.auth-loading{display:grid;place-items:center;gap:14px;min-height:180px;color:#9ca3af}.auth-spinner{width:26px;height:26px;border:3px solid #ffffff22;border-top-color:#8b5cf6;border-radius:50%;animation:auth-spin .8s linear infinite}@keyframes auth-spin{to{transform:rotate(360deg)}}
 .auth-valid {
   margin-left: auto;
   color: #54d7a7;

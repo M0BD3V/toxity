@@ -9,12 +9,6 @@ interface Window {
     listScreenSources: () => Promise<ToxityScreenSource[]>;
     selectScreenSource: (sourceId: string) => Promise<void>;
     getActivity: () => Promise<{ focused: boolean; visible: boolean; idleSeconds: number }>;
-  };
-}
-
-interface Window {
-  toxity?: {
-    getVersion: () => Promise<string>;
-    platform: string;
+    onAuthLink: (callback: (link: { route: 'reset-password'; source?: string }) => void) => () => void;
   };
 }

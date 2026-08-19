@@ -14,6 +14,7 @@ import {
 import { isBackendConfigured, supabase } from "./lib/supabase";
 import {
   checkNametagAvailability,
+  mapAuthError,
   normalizeEmail,
   normalizeNametag,
   passwordError,
@@ -22,28 +23,57 @@ import {
   resendSignupCode,
   signIn,
   signUp,
+  updatePassword,
   verifySignupCode,
 } from "./lib/auth";
 import toxitySymbol from "../assets/brand/svg/toxity-symbol.svg";
 
-type Mode = "login" | "register" | "verify" | "reset";
+type Mode = "login" | "register" | "verify" | "reset" | "newPassword";
 type Registration = { email: string; displayName: string; nametag: string };
 
 const nametagPattern = /^[a-z0-9_]{3,20}$/;
 
 export function AuthGate({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
+  const [sessionReady, setSessionReady] = useState(!supabase);
   const [preview, setPreview] = useState(!isBackendConfigured);
+  const [recovering, setRecovering] = useState(false);
+  const [recoveryError, setRecoveryError] = useState("");
 
   useEffect(() => {
     if (!supabase) return;
-    void supabase.auth
-      .getSession()
-      .then(({ data }) => setSession(data.session));
-    const { data } = supabase.auth.onAuthStateChange((_event, nextSession) =>
-      setSession(nextSession),
-    );
+    void supabase.auth.getSession()
+      .then(({ data }) => {
+        setSession(data.session);
+        // Supabase may process the HTTPS callback during client
+        // initialization, before React subscribes to PASSWORD_RECOVERY.
+        if (data.session && window.location.pathname.endsWith("/reset-password")) {
+          setRecoveryError("");
+          setRecovering(true);
+        }
+      })
+      .catch(() => setSession(null))
+      .finally(() => setSessionReady(true));
+    const { data } = supabase.auth.onAuthStateChange((event, nextSession) => {
+      setSession(nextSession);
+      if (event === "PASSWORD_RECOVERY") {
+        setRecoveryError("");
+        setRecovering(true);
+      }
+      if (event === "SIGNED_OUT") setRecovering(false);
+    });
     return () => data.subscription.unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    if (!supabase || !window.toxity?.onAuthLink) return;
+    return window.toxity.onAuthLink((link) => {
+      // The main process only forwards this navigation event. Supabase must
+      // process the HTTPS callback and emit PASSWORD_RECOVERY; no token is
+      // accepted or interpreted here.
+      if (link.route !== "reset-password") return;
+      setRecoveryError("Abra o link de recuperação no navegador para continuar.");
+    });
   }, []);
 
   if (!isBackendConfigured && !preview)
@@ -58,22 +88,36 @@ export function AuthGate({ children }: { children: ReactNode }) {
         {children}
       </>
     );
-  if (!session) return <AuthScreen onPreview={() => setPreview(true)} />;
+  if (!sessionReady) return <AuthLoading />;
+  if (recovering)
+    return <AuthScreen key="recovery" onPreview={() => setPreview(true)} recoveryMode onRecoveryComplete={() => setRecovering(false)} />;
+  if (!session)
+    return <AuthScreen key={recoveryError || "login"} onPreview={() => setPreview(true)} initialError={recoveryError} />;
   return children;
+}
+
+function AuthLoading() {
+  return <main className="auth-shell"><section className="auth-panel"><div className="auth-card auth-loading"><div className="auth-spinner" aria-label="Carregando sessão" /><p>Restaurando sua sessão…</p></div></section></main>;
 }
 
 function AuthScreen({
   onPreview,
   setupOnly = false,
+  recoveryMode = false,
+  onRecoveryComplete,
+  initialError = "",
 }: {
   onPreview: () => void;
   setupOnly?: boolean;
+  recoveryMode?: boolean;
+  onRecoveryComplete?: () => void;
+  initialError?: string;
 }) {
-  const [mode, setMode] = useState<Mode>("login");
+  const [mode, setMode] = useState<Mode>(recoveryMode ? "newPassword" : "login");
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
-  const [error, setError] = useState("");
+  const [error, setError] = useState(initialError);
   const [registration, setRegistration] = useState<Registration | null>(null);
   const [nametag, setNametag] = useState("");
   const [nametagState, setNametagState] = useState<
@@ -130,6 +174,16 @@ function AuthScreen({
         setMessage(
           "Se houver uma conta para este e-mail, enviaremos as instruções de recuperação.",
         );
+      } else if (mode === "newPassword") {
+        const password = String(values.get("password") ?? "");
+        const confirmation = String(values.get("passwordConfirmation") ?? "");
+        const invalidPassword = passwordError(password);
+        if (invalidPassword) throw new Error(invalidPassword);
+        if (password !== confirmation)
+          throw new Error("As senhas não coincidem.");
+        await updatePassword(password);
+        setMessage("Senha atualizada. Você já pode usar sua conta Toxity.");
+        onRecoveryComplete?.();
       } else if (mode === "register") {
         const displayName = String(values.get("displayName") ?? "").trim();
         const candidate = normalizeNametag(String(values.get("nametag") ?? ""));
@@ -163,8 +217,7 @@ function AuthScreen({
         await signIn(email, String(values.get("password")));
       }
     } catch (reason) {
-      const raw =
-        reason instanceof Error ? reason.message : "Não foi possível concluir.";
+      const raw = reason instanceof Error ? reason.message : "";
       if (
         mode === "register" &&
         !raw.startsWith("O nome") &&
@@ -179,7 +232,9 @@ function AuthScreen({
             ? registrationMessage
             : "Não foi possível criar a conta agora. Verifique os dados e tente novamente.",
         );
-      } else setError(raw);
+      } else if (raw.startsWith("Use no mínimo") || raw.startsWith("A senha precisa") || raw.startsWith("As senhas")) {
+        setError(raw);
+      } else setError(mapAuthError(reason).message);
     } finally {
       setLoading(false);
     }
@@ -231,6 +286,8 @@ function AuthScreen({
               ? "SUA IDENTIDADE"
               : mode === "verify"
                 ? "CONFIRME SEU E-MAIL"
+                : mode === "newPassword"
+                  ? "NOVA SENHA"
                 : mode === "reset"
                   ? "RECUPERAR ACESSO"
                   : "BEM-VINDO DE VOLTA"}
@@ -242,6 +299,8 @@ function AuthScreen({
                 ? "Crie seu espaço"
                 : mode === "verify"
                   ? "Digite seu código"
+                  : mode === "newPassword"
+                    ? "Crie uma nova senha"
                   : mode === "reset"
                     ? "Recupere seu acesso"
                     : "Continue de onde parou"}
@@ -335,14 +394,16 @@ function AuthScreen({
                   </label>
                 </div>
               )}
-              <Field
-                icon={<Mail />}
-                name="email"
-                label="E-mail"
-                placeholder="voce@email.com"
-                type="email"
-                defaultValue={registration?.email}
-              />
+              {mode !== "newPassword" && (
+                <Field
+                  icon={<Mail />}
+                  name="email"
+                  label="E-mail"
+                  placeholder="voce@email.com"
+                  type="email"
+                  defaultValue={registration?.email}
+                />
+              )}
               {mode !== "reset" && (
                 <>
                   <label className="auth-field">
@@ -352,12 +413,12 @@ function AuthScreen({
                       <input
                         name="password"
                         type={showPassword ? "text" : "password"}
-                        placeholder="10+ caracteres, letra e número"
-                        minLength={10}
+                        placeholder="8+ caracteres, maiúscula e símbolo"
+                        minLength={8}
                         autoComplete={
-                          mode === "register"
-                            ? "new-password"
-                            : "current-password"
+                          mode === "login"
+                            ? "current-password"
+                            : "new-password"
                         }
                       />
                       <button
@@ -368,7 +429,7 @@ function AuthScreen({
                       </button>
                     </div>
                   </label>
-                  {mode === "register" && (
+                  {(mode === "register" || mode === "newPassword") && (
                     <label className="auth-field">
                       <span>Confirmar senha</span>
                       <div>
@@ -398,6 +459,8 @@ function AuthScreen({
                   ? "Aguarde…"
                   : mode === "register"
                     ? "Criar conta"
+                    : mode === "newPassword"
+                      ? "Salvar nova senha"
                     : mode === "reset"
                       ? "Enviar instruções"
                       : "Entrar"}
@@ -405,7 +468,7 @@ function AuthScreen({
               </button>
             </form>
           )}
-          {!setupOnly && mode !== "verify" && (
+          {!setupOnly && mode !== "verify" && mode !== "newPassword" && (
             <div className="auth-links">
               {mode === "login" && (
                 <button onClick={() => changeMode("reset")}>
