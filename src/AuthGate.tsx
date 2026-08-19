@@ -438,7 +438,7 @@ function AuthScreen({
                           name="passwordConfirmation"
                           type={showPassword ? "text" : "password"}
                           placeholder="Repita sua senha"
-                          minLength={10}
+                        minLength={8}
                           autoComplete="new-password"
                         />
                       </div>
