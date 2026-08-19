@@ -111,7 +111,13 @@ export function mapAuthError(reason: unknown): { code: AuthErrorCode; message: s
     return { code: "email_not_confirmed", message: "Confirme seu e-mail antes de entrar." };
   if (raw.includes("expired") || raw.includes("invalid or has expired"))
     return { code: "expired", message: "Este link expirou. Solicite uma nova recuperação." };
-  if (raw.includes("rate limit") || raw.includes("too many"))
+  if (
+    raw.includes("rate limit") ||
+    raw.includes("too many") ||
+    raw.includes("for security purposes") ||
+    raw.includes("once every") ||
+    raw.includes("email rate")
+  )
     return { code: "rate_limited", message: "Muitas tentativas. Aguarde alguns instantes." };
   return { code: "unknown", message: "Não foi possível concluir esta operação agora." };
 }
