@@ -11,7 +11,11 @@ export const supabase = isBackendConfigured
         persistSession: true,
         autoRefreshToken: true,
         detectSessionInUrl: true,
-        flowType: 'pkce',
+        // Recovery links may be opened on a different device/browser than
+        // the one that requested them. The official implicit callback flow
+        // lets Supabase restore that session without the renderer or Electron
+        // handling tokens.
+        flowType: 'implicit',
       },
     })
   : null;
